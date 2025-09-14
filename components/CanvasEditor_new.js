@@ -1,10 +1,28 @@
+'use client'
+
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { fabric } from 'fabric'
+import dynamic from 'next/dynamic'
 import ContextMenu from './ContextMenu'
 import { getDefaultTemplate } from '../lib/namecardDatabase'
 import ImageUpload from './ImageUpload'
 import ImageUploadLibrary from './ImageUploadLibrary'
 import { uploadImage } from '../lib/storage'
+
+// Fabric.js를 동적으로 import하여 SSR 문제 해결
+let fabric = null
+const loadFabric = async () => {
+  if (typeof window !== 'undefined' && !fabric) {
+    try {
+      const fabricModule = await import('fabric')
+      fabric = fabricModule.fabric
+      return fabric
+    } catch (error) {
+      console.error('Failed to load fabric.js:', error)
+      return null
+    }
+  }
+  return fabric
+}
 
 export default function CanvasEditor({ 
   selectedProfile, 
@@ -55,7 +73,7 @@ export default function CanvasEditor({
 
   // 용지 설정에 따른 캔버스 크기 조정
   const updateCanvasSize = (canvas, widthCm, heightCm) => {
-    if (!canvas) return
+    if (!canvas || !fabric) return
 
     // cm를 픽셀로 변환 (37.8px/cm 기준)
     const widthPx = Math.round(widthCm * 37.8)
@@ -78,7 +96,7 @@ export default function CanvasEditor({
 
   // 가이드라인 생성/업데이트
   const updateGuidelines = (canvas, widthCm, heightCm, showGuidelines) => {
-    if (!canvas) return
+    if (!canvas || !fabric) return
 
     // 기존 가이드라인 제거
     const existingGuidelines = canvas.getObjects().filter(obj => obj.type === 'guideline')
@@ -217,21 +235,29 @@ export default function CanvasEditor({
 
   // 캔버스 초기화
   useEffect(() => {
-    if (!canvasRef.current) return
+    const initializeCanvas = async () => {
+      if (!canvasRef.current) return
 
-    // 고정 캔버스 크기 (9cm x 12.5cm)
-    const widthPx = 340  // 9cm * 37.8px/cm
-    const heightPx = 472 // 12.5cm * 37.8px/cm
-    
-    const canvas = new fabric.Canvas(canvasRef.current, {
-      width: widthPx,
-      height: heightPx,
-      backgroundColor: '#ffffff',
-      enableRetinaScaling: true,
-      imageSmoothingEnabled: true,
-      selection: true,
-      preserveObjectStacking: true
-    })
+      // Fabric.js 로드 대기
+      const fabricLib = await loadFabric()
+      if (!fabricLib) {
+        console.error('Fabric.js could not be loaded')
+        return
+      }
+
+      // 고정 캔버스 크기 (9cm x 12.5cm)
+      const widthPx = 340  // 9cm * 37.8px/cm
+      const heightPx = 472 // 12.5cm * 37.8px/cm
+      
+      const canvas = new fabricLib.Canvas(canvasRef.current, {
+        width: widthPx,
+        height: heightPx,
+        backgroundColor: '#ffffff',
+        enableRetinaScaling: true,
+        imageSmoothingEnabled: true,
+        selection: true,
+        preserveObjectStacking: true
+      })
 
     fabricCanvasRef.current = canvas
     setIsCanvasReady(true)
@@ -390,14 +416,22 @@ export default function CanvasEditor({
       }
     })
 
-    return () => {
-      canvas.dispose()
     }
-  }, [])
+
+    initializeCanvas()
+
+    return () => {
+      if (fabricCanvasRef.current) {
+        fabricCanvasRef.current.dispose()
+      }
+    }
+  }, []) // 컴포넌트 마운트 시 한 번만 실행
 
   // 기본 템플릿 생성
   const createDefaultTemplate = (canvas) => {
     console.log('Creating default template for canvas:', canvas.width, 'x', canvas.height)
+    
+    if (!canvas || !fabric) return
     
     // 캔버스 중앙 좌표
     const centerX = canvas.width / 2  // 170
