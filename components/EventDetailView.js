@@ -1,15 +1,26 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { getProfilesByEvent } from '../lib/database'
 import ProfileList from './ProfileList'
-import CanvasEditor from './CanvasEditor_new'
 import PropertyPanel from './PropertyPanel'
 import ProfileForm from './ProfileForm'
 import ExcelUpload from './ExcelUpload'
 import NamecardTemplateManager from './NamecardTemplateManager'
 import NamecardTemplateSettings from './NamecardTemplateSettings'
 import OutputPanel from './OutputPanel'
+
+// CanvasEditor를 dynamic import로 불러와서 SSR 완전 비활성화
+const CanvasEditor = dynamic(() => import('./CanvasEditor_new'), { 
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg">
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+      <div className="text-sm text-gray-600">캔버스 로딩 중...</div>
+    </div>
+  </div>
+})
 
 export default function EventDetailView({ 
   event, 
@@ -31,6 +42,7 @@ export default function EventDetailView({
   const [isTemplateCollapsed, setIsTemplateCollapsed] = useState(true)
   const [isOutputCollapsed, setIsOutputCollapsed] = useState(true)
   const [selectionMode, setSelectionMode] = useState('individual') // 'individual' 또는 'batch'
+  const [isClient, setIsClient] = useState(false) // 클라이언트 렌더링 상태
 
   // 선택모드 변경 핸들러
   const handleSelectionModeChange = (newMode) => {
@@ -52,6 +64,11 @@ export default function EventDetailView({
     onEventChange()
     setShowExcelUpload(false)
   }
+
+  // 클라이언트 렌더링 완료 확인
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
 
   const handleCanvasUpdate = (updateData) => {
@@ -315,17 +332,26 @@ export default function EventDetailView({
                 <p className="text-sm text-gray-500 mt-1">명단을 선택하세요</p>
               )}
             </div>
-            <div className="flex-1 p-4">
+            <div className="flex-1 p-4 min-h-[600px]">
               {selectionMode === 'individual' ? (
-                <CanvasEditor
-                  selectedProfile={selectedProfile}
-                  onCanvasUpdate={handleCanvasUpdate}
-                  selectedObject={selectedObject}
-                  onPropertyChange={handlePropertyChange}
-                  eventId={event.id}
-                  onTemplateLoad={handleCanvasRef}
-                  onCanvasRef={setCanvasRef}
-                />
+                isClient ? (
+                  <CanvasEditor
+                    selectedProfile={selectedProfile}
+                    onCanvasUpdate={handleCanvasUpdate}
+                    selectedObject={selectedObject}
+                    onPropertyChange={handlePropertyChange}
+                    eventId={event.id}
+                    onTemplateLoad={handleCanvasRef}
+                    onCanvasRef={setCanvasRef}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                      <div className="text-sm text-gray-600">캔버스 로딩 중...</div>
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center text-gray-500">

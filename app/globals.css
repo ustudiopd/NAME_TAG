@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 캔버스 렌더링 문제 해결을 위한 전역 높이 설정 */
+html, body, #__next {
+  height: 100%;
+}
+
 :root {
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;

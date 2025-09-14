@@ -1,388 +1,93 @@
-# 명찰 출력 프로그램 - 템플릿 로드 오류 해결 플랜
+네, 보내주신 ChatGPT의 분석 내용은 매우 정확하고 전문적입니다. 우리가 함께 추정했던 원인을 기술적으로 더 깊이 파고들어, 거의 완벽한 해결책을 제시하고 있습니다.
 
-## 📋 현재 상황 분석
-
-### **핵심 문제점**
-
-현재 `CanvasEditor_new.js`의 `loadTemplate` 함수에서 템플릿 JSON이 제대로 로드되지 않는 문제가 발생하고 있습니다.
-
-**주요 원인:**
-1. **비동기 처리 문제**: `loadOptimizedTemplate` 함수가 `async`로 선언되었지만 `await` 없이 호출됨
-2. **에러 처리 부족**: 에러 발생 시 `createDefaultTemplate`으로 대체하여 문제가 숨겨짐
-3. **이미지 로드 타이밍**: 배경 이미지와 일반 이미지 로드가 비동기로 처리되어 완료 시점을 기다리지 않음
-
-### **현재 코드 구조 분석**
-
-```javascript
-// 현재 loadTemplate 함수 (454-530줄)
-const loadTemplate = (template) => {
-  // ... 유효성 검사
-  if (templateData.version === '1.0') {
-    loadOptimizedTemplate(canvas, templateData) // ← async 함수를 await 없이 호출
-  } else {
-    canvas.loadFromJSON(jsonData, callback) // ← 정상 작동
-  }
-}
-
-// loadOptimizedTemplate 함수 (533줄부터)
-const loadOptimizedTemplate = async (canvas, templateData) => {
-  // ... 캔버스 설정
-  // ... 배경 이미지 로드 (비동기)
-  // ... 객체들 복원 (비동기 이미지 포함)
-  canvas.renderAll() // ← 모든 비동기 작업 완료 전에 호출
-}
-```
+제가 이 내용을 쉽게 이해하고 바로 적용하실 수 있도록 **핵심만 요약하고 단계별 실행 계획을 다시 정리**해 드리겠습니다.
 
 -----
 
-## 🎯 해결 방안
+### \#\# 🧐 핵심 원인 요약
 
-### **1단계: 즉시 수정 (High Priority)**
+ChatGPT의 분석을 한 문장으로 요약하면 이렇습니다.
 
-#### A. `loadTemplate` 함수 수정
-```javascript
-const loadTemplate = async (template) => {
-  if (!fabricCanvasRef.current) return
+**"Vercel 배포 환경에서는 화면 레이아웃이 너무 빨리 계산되다 보니, Fabric.js가 캔버스를 그리려 할 때 부모 컨테이너의 크기가 순간적으로 '0px'이 되어, 결국 0x0 크기의 보이지 않는 캔버스가 만들어지는 것입니다."**
 
-  console.log('Loading template:', template)
-  
-  if (!template) {
-    console.error('Template data not provided')
-    return
-  }
-  
-  if (!template.canvas_json) {
-    console.error('Template JSON data not provided')
-    return
-  }
-
-  try {
-    const canvas = fabricCanvasRef.current
-    console.log('Clearing canvas...')
-    
-    // 기존 객체들 모두 제거
-    canvas.clear()
-    
-    const templateData = template.canvas_json
-    
-    // JSON 데이터 검증 강화
-    if (!templateData || typeof templateData !== 'object') {
-      console.error('Invalid template JSON data:', templateData)
-      return
-    }
-    
-    console.log('Template data structure:', {
-      hasVersion: !!templateData.version,
-      version: templateData.version,
-      hasObjects: !!templateData.objects,
-      objectCount: templateData.objects?.length || 0,
-      hasCanvas: !!templateData.canvas
-    })
-    
-    // 최적화된 JSON인지 확인
-    if (templateData.version === '1.0') {
-      // 최적화된 JSON 처리 - await 추가
-      await loadOptimizedTemplate(canvas, templateData)
-    } else {
-      // 기존 Fabric.js JSON 처리 (하위 호환성)
-      const jsonData = Array.isArray(templateData) 
-        ? { objects: templateData, version: '5.3.0' }
-        : templateData
-      
-      await new Promise((resolve, reject) => {
-        canvas.loadFromJSON(jsonData, () => {
-          console.log('Template JSON loaded, rendering...')
-          
-          // 모든 객체에 setCoords() 호출 및 텍스트 객체 속성 설정
-          canvas.getObjects().forEach(obj => {
-            obj.setCoords()
-            
-            // 텍스트 객체인 경우 크기 조절 제한 설정
-            if (obj.type === 'i-text' || obj.type === 'text') {
-              obj.set({
-                lockScalingX: true,
-                lockScalingY: true,
-                lockUniScaling: true
-              })
-            }
-          })
-          
-          canvas.renderAll()
-          setIsTemplateLoaded(true)
-          console.log('Template loaded successfully:', template.template_name)
-          resolve()
-        }, (error) => {
-          console.error('Error in loadFromJSON callback:', error)
-          reject(error)
-        })
-      })
-    }
-    
-  } catch (error) {
-    console.error('Error loading template:', error)
-    // createDefaultTemplate 호출 제거 - 에러를 명확히 표시
-    alert(`템플릿 로드 실패: ${error.message}`)
-  }
-}
-```
-
-#### B. `loadOptimizedTemplate` 함수 수정
-```javascript
-const loadOptimizedTemplate = async (canvas, templateData) => {
-  try {
-    // 캔버스 크기 설정
-    if (templateData.canvas) {
-      canvas.setWidth(templateData.canvas.width)
-      canvas.setHeight(templateData.canvas.height)
-      canvas.setBackgroundColor(templateData.canvas.backgroundColor, canvas.renderAll.bind(canvas))
-    }
-    
-    // 비동기 작업들을 Promise로 관리
-    const asyncTasks = []
-    
-    // 배경 이미지 로드
-    if (templateData.backgroundImage) {
-      setBackgroundImage(templateData.backgroundImage)
-      
-      const backgroundPromise = new Promise((resolve, reject) => {
-        fabric.Image.fromURL(templateData.backgroundImage.url, (img) => {
-          if (!img) {
-            reject(new Error('Background image load failed'))
-            return
-          }
-          
-          img.set({
-            left: 0,
-            top: 0,
-            scaleX: 340 / img.width,
-            scaleY: 472 / img.height,
-            selectable: true,
-            evented: true,
-            opacity: backgroundOpacity,
-            type: 'background',
-            crossOrigin: 'anonymous'
-          })
-          
-          img.setCoords()
-          canvas.add(img)
-          canvas.sendToBack(img)
-          resolve()
-        }, { crossOrigin: 'anonymous' })
-      })
-      asyncTasks.push(backgroundPromise)
-    }
-    
-    // 객체들 복원
-    for (const objData of templateData.objects || []) {
-      if (objData.type === 'i-text' || objData.type === 'text') {
-        // 텍스트 객체는 동기 처리
-        const textObj = new fabric.IText(objData.text || '', {
-          left: objData.left,
-          top: objData.top,
-          width: objData.width,
-          height: objData.height,
-          fontSize: objData.fontSize,
-          fontFamily: objData.fontFamily,
-          fontWeight: objData.fontWeight,
-          fontStyle: objData.fontStyle,
-          fill: objData.fill,
-          textAlign: objData.textAlign,
-          angle: objData.angle,
-          scaleX: objData.scaleX || 1,
-          scaleY: objData.scaleY || 1,
-          originX: objData.originX || 'left',
-          originY: objData.originY || 'top',
-          lockScalingX: true,
-          lockScalingY: true,
-          lockUniScaling: true
-        })
-        textObj.setCoords()
-        canvas.add(textObj)
-        
-      } else if (objData.type === 'image') {
-        // 이미지 객체는 비동기 처리
-        const imagePromise = new Promise((resolve, reject) => {
-          fabric.Image.fromURL(objData.src, (img) => {
-            if (!img) {
-              reject(new Error(`Image load failed: ${objData.src}`))
-              return
-            }
-            
-            img.set({
-              left: objData.left,
-              top: objData.top,
-              scaleX: objData.scaleX,
-              scaleY: objData.scaleY,
-              angle: objData.angle,
-              crossOrigin: 'anonymous'
-            })
-            img.setCoords()
-            canvas.add(img)
-            resolve()
-          }, { crossOrigin: 'anonymous' })
-        })
-        asyncTasks.push(imagePromise)
-        
-      } else if (objData.type === 'background') {
-        // 배경 이미지 객체는 이미 위에서 처리됨
-        continue
-        
-      } else {
-        // 기타 객체들 (Rect, Circle 등)
-        const obj = new fabric[objData.type.charAt(0).toUpperCase() + objData.type.slice(1)]({
-          left: objData.left,
-          top: objData.top,
-          width: objData.width,
-          height: objData.height,
-          fill: objData.fill,
-          stroke: objData.stroke,
-          strokeWidth: objData.strokeWidth,
-          angle: objData.angle,
-          scaleX: objData.scaleX || 1,
-          scaleY: objData.scaleY || 1
-        })
-        obj.setCoords()
-        canvas.add(obj)
-      }
-    }
-    
-    // 모든 비동기 작업 완료 대기
-    if (asyncTasks.length > 0) {
-      await Promise.all(asyncTasks)
-    }
-    
-    // 최종 렌더링
-    canvas.renderAll()
-    setIsTemplateLoaded(true)
-    console.log('Optimized template loaded successfully')
-    
-  } catch (error) {
-    console.error('Error loading optimized template:', error)
-    throw error // 에러를 상위로 전파
-  }
-}
-```
-
-### **2단계: 에러 처리 개선 (Medium Priority)**
-
-#### A. 사용자 친화적 에러 메시지
-```javascript
-// 에러 타입별 메시지 분류
-const getErrorMessage = (error) => {
-  if (error.message.includes('image load failed')) {
-    return '이미지 로드에 실패했습니다. 이미지 파일을 확인해주세요.'
-  } else if (error.message.includes('Invalid template JSON')) {
-    return '템플릿 데이터 형식이 올바르지 않습니다.'
-  } else if (error.message.includes('Template data not provided')) {
-    return '템플릿 정보가 없습니다.'
-  } else {
-    return `템플릿 로드 중 오류가 발생했습니다: ${error.message}`
-  }
-}
-```
-
-#### B. 로딩 상태 표시
-```javascript
-// 로딩 상태 추가
-const [isLoading, setIsLoading] = useState(false)
-
-const loadTemplate = async (template) => {
-  setIsLoading(true)
-  try {
-    // ... 로드 로직
-  } catch (error) {
-    // ... 에러 처리
-  } finally {
-    setIsLoading(false)
-  }
-}
-```
-
-### **3단계: 디버깅 강화 (Low Priority)**
-
-#### A. 상세한 로그 추가
-```javascript
-console.log('Template loading started:', {
-  templateId: template.id,
-  templateName: template.template_name,
-  hasCanvasJson: !!template.canvas_json,
-  jsonSize: JSON.stringify(template.canvas_json).length
-})
-```
-
-#### B. 템플릿 검증 함수
-```javascript
-const validateTemplate = (template) => {
-  const errors = []
-  
-  if (!template) {
-    errors.push('Template is null or undefined')
-  } else {
-    if (!template.canvas_json) {
-      errors.push('canvas_json is missing')
-    } else {
-      const data = template.canvas_json
-      if (!data.objects || !Array.isArray(data.objects)) {
-        errors.push('objects array is missing or invalid')
-      }
-      if (data.version && data.version !== '1.0') {
-        errors.push(`Unsupported version: ${data.version}`)
-      }
-    }
-  }
-  
-  return {
-    isValid: errors.length === 0,
-    errors
-  }
-}
-```
+로컬 환경에서는 속도가 느려 우연히 타이밍이 맞았지만, 최적화된 배포 환경에서는 이 문제가 드러나는 것이죠. 인쇄 미리보기에서 보이는 이유는, 인쇄 시점에는 레이아웃 계산이 이미 다 끝나고 실제 크기가 정해졌기 때문입니다.
 
 -----
 
-## 🧪 테스트 시나리오
+### \#\# 🚀 단계별 해결 계획
 
-### **1. 기본 템플릿 로드 테스트**
-1. 템플릿 저장 → 불러오기 → 캔버스에 객체 표시 확인
-2. 텍스트 객체의 크기 조절 제한 확인
-3. 이미지 객체의 정확한 위치 및 크기 확인
+ChatGPT가 제안한 여러 패치 중, 가장 효과적이고 적용하기 쉬운 순서대로 진행하는 것이 좋습니다. **아래 1단계부터 차례대로 적용**해 보세요. 아마 1, 2단계 안에서 해결될 확률이 매우 높습니다.
 
-### **2. 에러 상황 테스트**
-1. 잘못된 JSON 구조의 템플릿 로드
-2. 존재하지 않는 이미지 URL 포함 템플릿
-3. 네트워크 오류 상황
+#### 1단계: 가장 간단하고 효과적인 CSS 수정 (패치 3)
 
-### **3. 성능 테스트**
-1. 대용량 이미지가 포함된 템플릿
-2. 많은 객체가 포함된 템플릿
-3. 동시에 여러 템플릿 로드
+가장 먼저, 캔버스 컨테이너가 초기 렌더링 시 높이를 가질 수 있도록 **전역 CSS를 수정**하는 것입니다. 코드 변경이 가장 적고 효과적입니다.
 
------
+1.  `app/globals.css` 파일을 엽니다.
+2.  아래 코드를 파일 최상단 또는 적절한 위치에 추가합니다.
 
-## 📊 우선순위별 실행 계획
+<!-- end list -->
 
-### **Phase 1: 핵심 수정 (1-2일)**
-- [ ] `loadTemplate` 함수에 `async/await` 적용
-- [ ] `loadOptimizedTemplate` 함수의 비동기 처리 개선
-- [ ] 에러 처리에서 `createDefaultTemplate` 제거
+```css
+/* app/globals.css */
+html, body, #__next {
+  height: 100%;
+}
+```
 
-### **Phase 2: 사용자 경험 개선 (2-3일)**
-- [ ] 로딩 상태 표시 추가
-- [ ] 사용자 친화적 에러 메시지
-- [ ] 템플릿 검증 로직 추가
+3.  캔버스를 감싸고 있는 `div`에 **최소 높이를 지정**합니다. (예: `EventDetailView.js`의 캔버스 컨테이너)
+      * Tailwind CSS를 사용하신다면 `min-h-[480px]` 같은 클래스를 추가해 주세요. (숫자는 적절히 조절)
 
-### **Phase 3: 디버깅 및 최적화 (3-5일)**
-- [ ] 상세한 로그 시스템 구축
-- [ ] 성능 최적화
-- [ ] 테스트 케이스 추가
+**이 방법이 효과적인 이유**: 이 CSS는 앱의 최상위 요소부터 높이 값을 갖도록 보장하여, 하위 요소들이 `h-full` 같은 클래스를 사용하더라도 높이가 `0`이 되는 것을 원천적으로 방지합니다.
 
 -----
 
-## 🎯 기대 효과
+#### 2단계: 렌더링 시점 보장 (패치 2)
 
-1. **템플릿 로드 성공률 100%**: 비동기 처리 개선으로 모든 템플릿이 정확히 로드됨
-2. **사용자 경험 향상**: 명확한 에러 메시지와 로딩 상태 표시
-3. **개발 효율성 증대**: 상세한 디버깅 정보로 문제 해결 시간 단축
-4. **시스템 안정성**: 에러 상황에서도 앱이 크래시되지 않음
+만약 1단계 CSS 수정만으로 해결되지 않는다면, **브라우저가 페이지를 완전히 그린 후에 캔버스를 렌더링**하도록 보장하는 방법을 사용합니다.
 
-**이 플랜을 단계별로 실행하면 템플릿 로드 문제가 완전히 해결될 것입니다.**
+1.  캔버스 컴포넌트를 불러오는 부모 컴포넌트(예: `EventDetailView.js`)를 수정합니다.
+2.  아래와 같이 `useState`와 `useEffect`를 사용하여 `mounted` 상태를 만듭니다.
+
+<!-- end list -->
+
+```javascript
+// app/event/[eventId]/page.js 또는 EventDetailView.js 등
+'use client'
+import dynamic from 'next/dynamic'
+import { useEffect, useState } from 'react'
+
+// CanvasEditor_new 컴포넌트를 dynamic import로 불러옵니다. (ssr: false는 필수)
+const CanvasEditorNew = dynamic(() => import('@/components/CanvasEditor_new'), { ssr: false })
+
+export default function Page() { // 또는 EventDetailView 컴포넌트
+  const [isClient, setIsClient] = useState(false)
+
+  // useEffect는 클라이언트에서만 실행되므로, 이 훅이 실행되면 isClient를 true로 바꿉니다.
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
+
+  return (
+    <div>
+      {/* ... 다른 컴포넌트들 ... */}
+      <div className="w-full min-h-[480px]"> {/* ⬅️ 1단계의 CSS 수정과 함께 적용 */}
+        {/* isClient가 true일 때만, 즉 클라이언트 렌더링이 준비됐을 때만 캔버스를 렌더링합니다. */}
+        {isClient ? <CanvasEditorNew /> : <div>캔버스 로딩 중...</div>}
+      </div>
+      {/* ... 다른 컴포넌트들 ... */}
+    </div>
+  )
+}
+```
+
+**이 방법이 효과적인 이유**: Next.js의 Hydration(서버에서 보낸 HTML에 React를 연결하는 과정)이 완전히 끝난 후에만 캔버스를 그리도록 하여, 렌더링 타이밍 문제를 회피합니다.
+
+-----
+
+#### 3단계: 가장 확실하고 강력한 해결책 (패치 1)
+
+1, 2단계를 시도해도 문제가 계속된다면, **컨테이너의 크기를 실시간으로 감지하여 캔버스 크기를 조절**하는 가장 확실한 방법을 사용해야 합니다.
+
+이 방법은 코드가 다소 복잡하지만, 어떤 상황에서도 캔버스 크기를 정확하게 유지해 줍니다. ChatGPT가 제안한 `CanvasViewport.tsx` 와 수정된 `CanvasEditor_new.tsx` 코드를 프로젝트에 적용하면 됩니다. 이 코드는 컨테이너 크기가 `0` 이상일 때만 `children`을 렌더링하고, `ResizeObserver`를 통해 크기 변경을 계속 추적하여 캔버스 내부 크기까지 동기화해 줍니다.
+
+**요약하자면, 1단계와 2단계를 먼저 적용해 보시는 것을 강력히 추천합니다.** 이 두 방법은 대부분의 "로컬에서는 되는데 배포하면 안 되는" 렌더링 문제를 해결해 줍니다.
