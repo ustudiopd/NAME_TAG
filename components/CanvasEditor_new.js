@@ -219,16 +219,18 @@ export default function CanvasEditor({
   useEffect(() => {
     if (!canvasRef.current) return
 
-    // 용지 설정에 따른 캔버스 크기 계산
-    const widthPx = Math.round(paperSettings.width * 37.8)
-    const heightPx = Math.round(paperSettings.height * 37.8)
+    // 고정 캔버스 크기 (9cm x 12.5cm)
+    const widthPx = 340  // 9cm * 37.8px/cm
+    const heightPx = 472 // 12.5cm * 37.8px/cm
     
     const canvas = new fabric.Canvas(canvasRef.current, {
       width: widthPx,
       height: heightPx,
       backgroundColor: '#ffffff',
       enableRetinaScaling: true,
-      imageSmoothingEnabled: true
+      imageSmoothingEnabled: true,
+      selection: true,
+      preserveObjectStacking: true
     })
 
     fabricCanvasRef.current = canvas
@@ -395,24 +397,31 @@ export default function CanvasEditor({
 
   // 기본 템플릿 생성
   const createDefaultTemplate = (canvas) => {
+    console.log('Creating default template for canvas:', canvas.width, 'x', canvas.height)
+    
+    // 캔버스 중앙 좌표
+    const centerX = canvas.width / 2  // 170
+    const centerY = canvas.height / 2 // 236
+    
     // 회사명 텍스트
     const companyText = new fabric.IText('회사명', {
-      left: 170,
-      top: 100,
+      left: centerX,
+      top: centerY - 80,
       fontSize: 24,
       fontFamily: 'Arial',
       fill: '#000000',
       textAlign: 'center',
       originX: 'center',
       originY: 'center',
-      zIndex: 1000  // 배경 이미지보다 앞에 오도록 설정
+      zIndex: 1000
     })
     canvas.add(companyText)
+    console.log('Added company text at:', centerX, centerY - 80)
 
     // 이름 텍스트
     const nameText = new fabric.IText('이름', {
-      left: 170,
-      top: 200,
+      left: centerX,
+      top: centerY,
       fontSize: 32,
       fontFamily: 'Arial',
       fontWeight: 'bold',
@@ -420,25 +429,28 @@ export default function CanvasEditor({
       textAlign: 'center',
       originX: 'center',
       originY: 'center',
-      zIndex: 1000  // 배경 이미지보다 앞에 오도록 설정
+      zIndex: 1000
     })
     canvas.add(nameText)
+    console.log('Added name text at:', centerX, centerY)
 
     // 직급 텍스트
     const titleText = new fabric.IText('직급', {
-      left: 170,
-      top: 300,
+      left: centerX,
+      top: centerY + 80,
       fontSize: 20,
       fontFamily: 'Arial',
       fill: '#000000',
       textAlign: 'center',
       originX: 'center',
       originY: 'center',
-      zIndex: 1000  // 배경 이미지보다 앞에 오도록 설정
+      zIndex: 1000
     })
     canvas.add(titleText)
+    console.log('Added title text at:', centerX, centerY + 80)
 
     safeRenderAll(canvas)
+    console.log('Default template created, total objects:', canvas.getObjects().length)
   }
 
   // 프로필 데이터로 캔버스 업데이트 (위치 유지하면서 텍스트만 변경)
