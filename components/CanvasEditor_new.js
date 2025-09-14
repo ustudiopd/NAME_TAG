@@ -784,9 +784,18 @@ export default function CanvasEditor({
 
   // 템플릿 로드 (최적화된 JSON 처리)
   const loadTemplate = useCallback(async (template) => {
-    if (!fabricCanvasRef.current) return
-
+    console.log('=== TEMPLATE LOADING START ===')
     console.log('Loading template:', template)
+    console.log('Template ID:', template?.id)
+    console.log('Template name:', template?.template_name)
+    console.log('Canvas ready:', !!fabricCanvasRef.current)
+    console.log('Fabric loaded:', !!fabric)
+    
+    if (!fabricCanvasRef.current) {
+      console.error('Canvas not ready')
+      return
+    }
+
     setIsLoading(true)
     
     if (!template) {
@@ -810,6 +819,7 @@ export default function CanvasEditor({
         return
       }
       fabric = fabricLib // 전역 fabric 변수에 할당
+      console.log('Fabric.js loaded for template loading')
       
       const canvas = fabricCanvasRef.current
       console.log('Clearing canvas...')
@@ -854,6 +864,7 @@ export default function CanvasEditor({
       alert(getErrorMessage(error))
     } finally {
       setIsLoading(false)
+      console.log('=== TEMPLATE LOADING COMPLETED ===')
     }
   }, [fabricCanvasRef, getErrorMessage])
 
