@@ -1550,28 +1550,37 @@ export default function CanvasEditor({
       )}
       
       <div 
-        className="border-2 border-gray-300 rounded-lg overflow-hidden relative flex justify-center bg-gray-50"
+        className="border-2 border-gray-300 rounded-lg relative flex justify-center bg-gray-50"
         style={{
           height: '500px',
           minHeight: '472px',
-          position: 'relative'
+          position: 'relative',
+          overflow: 'visible'
         }}
       >
-        <canvas
-          ref={canvasRef}
-          className="block"
+        <div 
+          id="fabric-canvas-container"
           style={{
+            position: 'relative',
             width: '340px',
             height: '472px',
             backgroundColor: '#ffffff',
-            display: 'block',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
             boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
             margin: '0 auto'
           }}
-          onContextMenu={(e) => e.preventDefault()} // 기본 우클릭 메뉴 비활성화
-        />
+        >
+          <canvas
+            ref={canvasRef}
+            style={{
+              display: 'block',
+              width: '100%',
+              height: '100%'
+            }}
+            onContextMenu={(e) => e.preventDefault()} // 기본 우클릭 메뉴 비활성화
+          />
+        </div>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-10">
             <div className="flex flex-col items-center space-y-2">
