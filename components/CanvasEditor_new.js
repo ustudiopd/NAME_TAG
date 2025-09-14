@@ -318,7 +318,7 @@ export default function CanvasEditor({
     canvas.add(sizeText)
 
     // 기본 템플릿 생성
-    createDefaultTemplate(canvas)
+    await createDefaultTemplate(canvas)
 
     // 강제 렌더링 실행 (배포 환경 대응)
     canvas.renderAll()
@@ -489,10 +489,18 @@ export default function CanvasEditor({
   }, []) // 컴포넌트 마운트 시 한 번만 실행
 
   // 기본 템플릿 생성
-  const createDefaultTemplate = (canvas) => {
+  const createDefaultTemplate = async (canvas) => {
     console.log('Creating default template for canvas:', canvas.width, 'x', canvas.height)
     
-    if (!canvas || !fabric) return
+    if (!canvas) return
+    
+    // Fabric.js 로드 확인
+    const fabricLib = await loadFabric()
+    if (!fabricLib) {
+      console.error('Fabric.js not loaded for default template')
+      return
+    }
+    fabric = fabricLib // 전역 fabric 변수에 할당
     
     // 캔버스 중앙 좌표
     const centerX = canvas.width / 2  // 170
@@ -637,7 +645,7 @@ export default function CanvasEditor({
   }, [fabricCanvasRef, safeRenderAll])
 
   // 기본 템플릿으로 캔버스 초기화 (프로필 없이)
-  const initializeCanvasWithDefaultTemplate = useCallback(() => {
+  const initializeCanvasWithDefaultTemplate = useCallback(async () => {
     if (!fabricCanvasRef.current) return
 
     const canvas = fabricCanvasRef.current
@@ -646,7 +654,7 @@ export default function CanvasEditor({
     canvas.clear()
     
     // 기본 템플릿 생성
-    createDefaultTemplate(canvas)
+    await createDefaultTemplate(canvas)
     
     console.log('Canvas initialized with default template')
   }, [fabricCanvasRef, createDefaultTemplate])
@@ -794,6 +802,15 @@ export default function CanvasEditor({
     }
 
     try {
+      // Fabric.js 로드 확인
+      const fabricLib = await loadFabric()
+      if (!fabricLib) {
+        console.error('Fabric.js not loaded')
+        setIsLoading(false)
+        return
+      }
+      fabric = fabricLib // 전역 fabric 변수에 할당
+      
       const canvas = fabricCanvasRef.current
       console.log('Clearing canvas...')
       
@@ -1357,16 +1374,21 @@ export default function CanvasEditor({
   useEffect(() => {
     if (!fabricCanvasRef.current || !isCanvasReady) return
 
+    // 템플릿 로딩 중이면 프로필 업데이트 건너뛰기
+    if (isLoading) {
+      console.log('CanvasEditor: Skipping profile update - template loading in progress')
+      return
+    }
+
     if (selectedProfile) {
       // 프로필이 선택된 경우 해당 프로필로 업데이트
       console.log('CanvasEditor: Updating canvas with profile:', selectedProfile.name)
       updateCanvasWithProfile(selectedProfile)
     } else {
-      // 프로필이 선택되지 않은 경우 기본 템플릿으로 초기화
-      console.log('CanvasEditor: Initializing canvas with default template')
-      initializeCanvasWithDefaultTemplate()
+      // 프로필이 선택되지 않은 경우 기본 템플릿으로 초기화하지 않음 (로드된 템플릿 유지)
+      console.log('CanvasEditor: No profile selected, but keeping current canvas content')
     }
-  }, [selectedProfile, isCanvasReady, updateCanvasWithProfile, initializeCanvasWithDefaultTemplate])
+  }, [selectedProfile, isCanvasReady, updateCanvasWithProfile, initializeCanvasWithDefaultTemplate, isLoading])
 
   // 외부에서 템플릿 로드 호출 가능하도록 노출 (캔버스 준비 후)
   useEffect(() => {
