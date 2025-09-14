@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getProfilesByEvent } from '../lib/database'
 import ProfileList from './ProfileList'
-import CanvasEditor from './CanvasEditor'
+import CanvasEditor from './CanvasEditor_new'
 import PropertyPanel from './PropertyPanel'
 import ProfileForm from './ProfileForm'
 import ExcelUpload from './ExcelUpload'
@@ -322,6 +322,8 @@ export default function EventDetailView({
                   onCanvasUpdate={handleCanvasUpdate}
                   selectedObject={selectedObject}
                   onPropertyChange={handlePropertyChange}
+                  eventId={event.id}
+                  onTemplateLoad={handleCanvasRef}
                   onCanvasRef={setCanvasRef}
                 />
               ) : (

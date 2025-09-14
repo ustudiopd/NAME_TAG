@@ -12,7 +12,8 @@ export default function CanvasEditor({
   selectedObject, 
   onPropertyChange,
   eventId,
-  onTemplateLoad
+  onTemplateLoad,
+  onCanvasRef
 }) {
   const canvasRef = useRef(null)
   const fabricCanvasRef = useRef(null)
@@ -232,6 +233,11 @@ export default function CanvasEditor({
 
     fabricCanvasRef.current = canvas
     setIsCanvasReady(true)
+    
+    // 부모 컴포넌트에 canvasRef 전달
+    if (onCanvasRef) {
+      onCanvasRef(canvasRef.current)
+    }
 
     // 가이드라인 추가
     updateGuidelines(canvas, paperSettings.width, paperSettings.height, paperSettings.showGuidelines)
