@@ -5,7 +5,7 @@ import { fabric } from 'fabric'
 import ContextMenu from './ContextMenu'
 import { uploadImage } from '../lib/storage'
 
-export default function CanvasEditor({ selectedProfile, onCanvasUpdate, selectedObject, onPropertyChange }) {
+export default function CanvasEditor({ selectedProfile, onCanvasUpdate, selectedObject, onPropertyChange, onCanvasRef }) {
   const canvasRef = useRef(null)
   const fabricCanvasRef = useRef(null)
   const [isCanvasReady, setIsCanvasReady] = useState(false)
@@ -34,6 +34,11 @@ export default function CanvasEditor({ selectedProfile, onCanvasUpdate, selected
 
     fabricCanvasRef.current = canvas
     setIsCanvasReady(true)
+    
+    // 부모 컴포넌트에 canvasRef 전달
+    if (onCanvasRef) {
+      onCanvasRef(canvasRef.current)
+    }
 
     // 캔버스 이벤트 리스너
     canvas.on('selection:created', handleSelection)
