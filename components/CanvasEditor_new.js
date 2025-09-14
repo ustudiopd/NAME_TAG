@@ -1549,7 +1549,14 @@ export default function CanvasEditor({
         </div>
       )}
       
-      <div className="border-2 border-gray-300 rounded-lg overflow-hidden relative flex justify-center bg-gray-50">
+      <div 
+        className="border-2 border-gray-300 rounded-lg overflow-hidden relative flex justify-center bg-gray-50"
+        style={{
+          height: '500px',
+          minHeight: '472px',
+          position: 'relative'
+        }}
+      >
         <canvas
           ref={canvasRef}
           className="block"
