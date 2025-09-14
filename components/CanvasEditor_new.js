@@ -10,18 +10,35 @@ import { uploadImage } from '../lib/storage'
 
 // Fabric.js를 동적으로 import하여 SSR 문제 해결
 let fabric = null
+let fabricLoading = false
+let fabricLoadPromise = null
+
 const loadFabric = async () => {
-  if (typeof window !== 'undefined' && !fabric) {
+  if (typeof window === 'undefined') return null
+  
+  if (fabric) return fabric
+  
+  if (fabricLoading && fabricLoadPromise) {
+    return await fabricLoadPromise
+  }
+  
+  fabricLoading = true
+  fabricLoadPromise = (async () => {
     try {
+      console.log('Loading fabric.js...')
       const fabricModule = await import('fabric')
       fabric = fabricModule.fabric
+      console.log('Fabric.js loaded successfully')
       return fabric
     } catch (error) {
       console.error('Failed to load fabric.js:', error)
       return null
+    } finally {
+      fabricLoading = false
     }
-  }
-  return fabric
+  })()
+  
+  return await fabricLoadPromise
 }
 
 export default function CanvasEditor({ 
@@ -236,15 +253,33 @@ export default function CanvasEditor({
   // 캔버스 초기화
   useEffect(() => {
     const initializeCanvas = async () => {
-      if (!canvasRef.current) return
-
-      // Fabric.js 로드 대기
-      const fabricLib = await loadFabric()
-      if (!fabricLib) {
-        console.error('Fabric.js could not be loaded')
+      if (!canvasRef.current) {
+        console.log('Canvas ref not ready, retrying...')
+        setTimeout(initializeCanvas, 100)
         return
       }
 
+      // Fabric.js 로드 대기 (재시도 로직 포함)
+      let fabricLib = null
+      let retryCount = 0
+      const maxRetries = 5
+      
+      while (!fabricLib && retryCount < maxRetries) {
+        fabricLib = await loadFabric()
+        if (!fabricLib) {
+          retryCount++
+          console.log(`Fabric.js loading retry ${retryCount}/${maxRetries}`)
+          await new Promise(resolve => setTimeout(resolve, 200 * retryCount))
+        }
+      }
+      
+      if (!fabricLib) {
+        console.error('Fabric.js could not be loaded after retries')
+        return
+      }
+
+      console.log('Initializing canvas with fabric.js...')
+      
       // 고정 캔버스 크기 (9cm x 12.5cm)
       const widthPx = 340  // 9cm * 37.8px/cm
       const heightPx = 472 // 12.5cm * 37.8px/cm
@@ -284,6 +319,32 @@ export default function CanvasEditor({
 
     // 기본 템플릿 생성
     createDefaultTemplate(canvas)
+
+    // 강제 렌더링 실행 (배포 환경 대응)
+    canvas.renderAll()
+    
+    // 배포 환경에서 안정적인 렌더링을 위한 다중 렌더링
+    setTimeout(() => {
+      canvas.renderAll()
+      console.log('Canvas force rendered after initialization (1st)')
+    }, 100)
+    
+    setTimeout(() => {
+      canvas.renderAll()
+      console.log('Canvas force rendered after initialization (2nd)')
+    }, 300)
+    
+    setTimeout(() => {
+      canvas.renderAll()
+      console.log('Canvas force rendered after initialization (3rd)')
+    }, 500)
+    
+    // 최종 렌더링 확인
+    setTimeout(() => {
+      const objects = canvas.getObjects()
+      console.log(`Canvas initialization complete. Objects count: ${objects.length}`)
+      canvas.renderAll()
+    }, 1000)
 
     // 이벤트 리스너 등록
     canvas.on('object:moving', () => {
@@ -553,10 +614,26 @@ export default function CanvasEditor({
       }
     })
 
-    // 안전한 렌더링
+    // 안전한 렌더링 (배포 환경 대응)
     if (safeRenderAll(canvas)) {
       console.log('Canvas updated with profile data')
     }
+    
+    // 배포 환경에서 안정적인 렌더링을 위한 추가 렌더링
+    setTimeout(() => {
+      canvas.renderAll()
+      console.log('Canvas force rendered after profile update (1st)')
+    }, 50)
+    
+    setTimeout(() => {
+      canvas.renderAll()
+      console.log('Canvas force rendered after profile update (2nd)')
+    }, 200)
+    
+    setTimeout(() => {
+      canvas.renderAll()
+      console.log('Canvas force rendered after profile update (3rd)')
+    }, 500)
   }, [fabricCanvasRef, safeRenderAll])
 
   // 기본 템플릿으로 캔버스 초기화 (프로필 없이)
@@ -1479,7 +1556,12 @@ export default function CanvasEditor({
           style={{
             width: '340px',
             height: '472px',
-            backgroundColor: '#ffffff'
+            backgroundColor: '#ffffff',
+            display: 'block',
+            border: '1px solid #e5e7eb',
+            borderRadius: '4px',
+            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
+            margin: '0 auto'
           }}
           onContextMenu={(e) => e.preventDefault()} // 기본 우클릭 메뉴 비활성화
         />
