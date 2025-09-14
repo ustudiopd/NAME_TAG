@@ -16,6 +16,7 @@ export default function OutputPanel({
 }) {
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
+  const [showPrintGuide, setShowPrintGuide] = useState(false) // 프린트 설정 안내 모달
   const [printSettings, setPrintSettings] = useState({
     offsetX: 0, // mm 미세 조정
     offsetY: 0, // mm 미세 조정
@@ -347,8 +348,26 @@ export default function OutputPanel({
     }
   }
 
+  // 프린트 설정 안내 모달 표시
+  const showPrintGuideModal = () => {
+    setShowPrintGuide(true)
+  }
+
+  // 프린트 설정 안내 모달 닫기
+  const closePrintGuideModal = () => {
+    setShowPrintGuide(false)
+  }
+
   // 직접 프린터 출력 (9.5cm x 12.5cm 사전 인쇄된 명찰 용지용)
   const printDirect = () => {
+    if (!canvasRef || !selectedProfile) return
+
+    // 프린트 설정 안내 모달 먼저 표시
+    showPrintGuideModal()
+  }
+
+  // 실제 프린트 실행 (안내 모달에서 확인 후)
+  const executePrint = () => {
     if (!canvasRef || !selectedProfile) return
 
     try {
@@ -412,6 +431,9 @@ export default function OutputPanel({
         printWindow.print()
       }, 500)
       
+      // 안내 모달 닫기
+      closePrintGuideModal()
+      
     } catch (error) {
       console.error('프린터 출력 오류:', error)
       alert('프린터 출력 중 오류가 발생했습니다.')
@@ -420,6 +442,14 @@ export default function OutputPanel({
 
   // 일괄 프린터 출력
   const printBatch = async () => {
+    if (!canvasRef || selectedProfiles.length === 0) return
+
+    // 프린트 설정 안내 모달 먼저 표시
+    showPrintGuideModal()
+  }
+
+  // 실제 일괄 프린트 실행 (안내 모달에서 확인 후)
+  const executeBatchPrint = async () => {
     if (!canvasRef || selectedProfiles.length === 0) return
 
     try {
@@ -438,6 +468,9 @@ export default function OutputPanel({
       setTimeout(() => {
         printWindow.print()
       }, 1000)
+      
+      // 안내 모달 닫기
+      closePrintGuideModal()
       
     } catch (error) {
       console.error('일괄 프린터 출력 오류:', error)
@@ -730,6 +763,83 @@ export default function OutputPanel({
       {!selectedProfile && (
         <div className="text-center p-4 text-gray-500 text-sm">
           명단을 선택하여 출력을 시작하세요
+        </div>
+      )}
+
+      {/* 프린트 설정 안내 모달 */}
+      {showPrintGuide && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-96 max-w-md mx-4">
+            <div className="flex items-center mb-4">
+              <div className="flex-shrink-0">
+                <svg className="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-lg font-medium text-gray-900">
+                  프린트 설정 안내
+                </h3>
+                <p className="text-sm text-gray-500">
+                  명찰 출력을 위한 프린터 설정을 확인해주세요
+                </p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-medium text-blue-900 mb-2">📋 프린터 설정 방법</h4>
+                <div className="text-sm text-blue-800 space-y-2">
+                  <div className="flex items-start">
+                    <span className="font-medium mr-2">1.</span>
+                    <span>프린트 설정에서 <strong>"설정 더보기"</strong> 클릭</span>
+                  </div>
+                  <div className="flex items-start">
+                    <span className="font-medium mr-2">2.</span>
+                    <span>용지 크기에서 <strong>"89mm x 127mm"</strong> 선택</span>
+                  </div>
+                  <div className="flex items-start">
+                    <span className="font-medium mr-2">3.</span>
+                    <span>품질을 <strong>"고품질"</strong> 또는 <strong>"최고 품질"</strong>로 설정</span>
+                  </div>
+                  <div className="flex items-start">
+                    <span className="font-medium mr-2">4.</span>
+                    <span>여백을 <strong>"없음"</strong> 또는 <strong>"최소"</strong>로 설정</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-medium text-yellow-900 mb-2">⚠️ 주의사항</h4>
+                <div className="text-sm text-yellow-800 space-y-1">
+                  <div>• 프린터에 89mm x 127mm 명찰 용지를 미리 넣어주세요</div>
+                  <div>• 용지 크기가 정확하지 않으면 출력이 잘릴 수 있습니다</div>
+                  <div>• 위치가 맞지 않으면 X/Y축 조정으로 미세 조정하세요</div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={closePrintGuideModal}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedProfiles.length > 0) {
+                    executeBatchPrint()
+                  } else {
+                    executePrint()
+                  }
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                프린트 실행
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
