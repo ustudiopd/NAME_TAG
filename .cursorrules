@@ -1,0 +1,395 @@
+# 명찰 출력 프로그램 - Cursor AI Rules (프로젝트 헌법)
+
+## 🎯 프로젝트 개요
+이 프로젝트는 Next.js + Fabric.js 기반의 명찰(이름표) 디자인 및 출력 프로그램입니다.
+- Next.js + React + Fabric.js + Tailwind CSS + Supabase
+- 엑셀 명단 기반 명찰 제작 시스템
+- 드래그 앤 드롭 인터페이스로 직관적인 디자인
+- 실시간 속성 동기화 및 정확한 위치 제어
+
+## 🔄 Plan/Act 모드 (필수 준수)
+
+### 기본 모드: PLAN
+- AI는 항상 **Plan 모드**로 시작합니다
+- Plan 모드에서는 **절대로** 코드를 생성하거나 수정하지 않습니다
+- 사용자가 코드 변경을 요구해도 계획 승인이 우선임을 알립니다
+- 매 응답마다 현재 모드를 `# Mode: PLAN` 또는 `# Mode: ACT`로 표시합니다
+
+### Plan 모드 행동 규칙
+1. **계획 수립만 수행**: 코드 작성 없이 필요한 정보 수집 및 솔루션 설계
+2. **상세한 계획 제공**: 변경할 파일 목록, 단계별 작업 내용, 예상 결과
+3. **사용자 승인 대기**: 계획이 완성되면 사용자의 명시적 승인을 기다림
+4. **메모리 뱅크 참조**: 관련 MD 파일들을 참조하여 일관성 유지
+
+### Act 모드 전환 조건
+- 사용자가 명시적으로 **"ACT"** 또는 **"실행해"**라고 지시할 때만 전환
+- 승인된 계획을 바탕으로만 실제 코드 변경 수행
+- 작업 완료 후 자동으로 Plan 모드로 복귀
+
+## 📚 메모리 뱅크 활용
+
+### 필수 참조 문서
+작업 시 다음 문서들을 우선 참조하세요:
+- `memory_bank/projectbrief.md`: 프로젝트 개요 및 목표
+- `memory_bank/techContext.md`: PyQt5 기술 스택 및 환경 정보
+- `memory_bank/systemPatterns.md`: 아키텍처 패턴 및 코딩 규칙
+- `memory_bank/productContext.md`: 비즈니스 로직 및 기능 동작
+- `memory_bank/activeContext.md`: 현재 작업 상황
+- `memory_bank/progress.md`: 완료된 작업 내역
+
+### 메모리 뱅크 업데이트
+- 작업 완료 후 "update memory bank" 지시 시 관련 문서 업데이트
+- 새로운 기능 추가 시 `plan.md` 생성 후 구현
+- 중요한 변경사항은 `progress.md`에 기록
+
+## 🛠️ Next.js + Fabric.js 코딩 규칙
+
+### React 컴포넌트 구조
+```javascript
+// 메인 컴포넌트 구조
+export default function MainComponent({ selectedProfile, onCanvasUpdate }) {
+  const canvasRef = useRef(null)
+  const fabricCanvasRef = useRef(null)
+  const [isCanvasReady, setIsCanvasReady] = useState(false)
+
+  useEffect(() => {
+    // 캔버스 초기화
+    setupCanvas()
+  }, [])
+
+  const setupCanvas = () => {
+    // Fabric.js 캔버스 설정
+  }
+
+  return (
+    <div className="w-full h-full">
+      <canvas ref={canvasRef} />
+    </div>
+  )
+}
+```
+
+### Fabric.js 캔버스 규칙
+```javascript
+// 캔버스 초기화
+const canvas = new fabric.Canvas(canvasRef.current, {
+  width: 360,  // 9cm (기본값)
+  height: 500, // 12.5cm (기본값)
+  backgroundColor: '#ffffff',
+  selection: true,
+  preserveObjectStacking: true,
+})
+
+// 텍스트 객체 생성
+const textObject = new fabric.IText('텍스트', {
+  left: 180,  // 캔버스 중앙
+  top: 250,
+  fontSize: 16,
+  fontFamily: 'Arial',
+  originX: 'center',
+  originY: 'center',
+  lockScalingX: true,
+  lockScalingY: true,
+  lockUniScaling: true,
+})
+```
+
+### 이벤트 처리
+```javascript
+// 이벤트 핸들러 명명 규칙
+const handleSelection = (e) => {
+  // 선택 이벤트 처리
+}
+
+const handleObjectModified = (e) => {
+  // 객체 수정 이벤트 처리
+}
+
+const handleAlignment = (alignmentType) => {
+  // 정렬 이벤트 처리
+}
+```
+
+## 🎨 UI 컴포넌트 규칙
+
+### Fabric.js 텍스트 객체
+```javascript
+// 텍스트 객체 생성 및 설정
+const createTextObject = (text, options = {}) => {
+  const textObject = new fabric.IText(text, {
+    left: 180,  // 캔버스 중앙
+    top: 250,
+    fontSize: 16,
+    fontFamily: 'Arial',
+    fill: '#000000',
+    textAlign: 'center',
+    originX: 'center',
+    originY: 'center',
+    lockScalingX: true,
+    lockScalingY: true,
+    lockUniScaling: true,
+    ...options
+  })
+  
+  return textObject
+}
+
+// 정렬 처리
+const centerObject = (object, canvas) => {
+  object.centerH()  // 가로 가운데
+  object.centerV()  // 세로 가운데
+  object.setCoords()
+  canvas.renderAll()
+}
+```
+
+### 이미지 처리
+```javascript
+const loadImageSafely = (filePath) => {
+  return new Promise((resolve, reject) => {
+    fabric.Image.fromURL(filePath, (img) => {
+      if (!img) {
+        reject(new Error("이미지 파일을 로드할 수 없습니다."))
+        return
+      }
+      
+      // 이미지 크기 제한
+      const maxSize = 1000
+      if (img.width > maxSize || img.height > maxSize) {
+        const scale = Math.min(maxSize / img.width, maxSize / img.height)
+        img.scale(scale)
+      }
+      
+      resolve(img)
+    }, {
+      crossOrigin: 'anonymous'
+    })
+  })
+}
+```
+
+## 📊 데이터 처리 규칙
+
+### 엑셀 데이터 처리
+```javascript
+const processExcelData = async (file) => {
+  try {
+    // 1. 파일 검증
+    if (!validateExcelFile(file)) {
+      throw new Error("지원하지 않는 파일 형식입니다.")
+    }
+    
+    // 2. 데이터 로드
+    const data = await readExcelFile(file)
+    
+    // 3. 필수 컬럼 확인
+    const requiredCols = ["이름", "회사명", "직급"]
+    const hasRequiredCols = requiredCols.every(col => 
+      data.some(row => row.hasOwnProperty(col))
+    )
+    
+    if (!hasRequiredCols) {
+      throw new Error("필수 컬럼이 없습니다.")
+    }
+    
+    // 4. 데이터 정리
+    const cleanedData = cleanData(data)
+    
+    return cleanedData
+    
+  } catch (error) {
+    console.error("엑셀 처리 실패:", error)
+    alert(`엑셀 처리 실패: ${error.message}`)
+    return null
+  }
+}
+```
+
+### 에러 처리
+```javascript
+const safeOperation = async (operation, errorMessage) => {
+  try {
+    return await operation()
+  } catch (error) {
+    console.error(`${errorMessage}:`, error)
+    alert(`${errorMessage}: ${error.message}`)
+    return null
+  }
+}
+```
+
+### 실시간 속성 동기화
+```javascript
+// 속성 패널과 캔버스 간 실시간 동기화
+const setupRealtimeSync = (selectedObject, onPropertyChange) => {
+  if (!selectedObject) return
+
+  const updateProperties = () => {
+    const properties = {
+      left: Math.round(selectedObject.left || 0),
+      top: Math.round(selectedObject.top || 0),
+      fontSize: selectedObject.fontSize || 16,
+      fontFamily: selectedObject.fontFamily || 'Arial',
+      fill: selectedObject.fill || '#000000',
+      // ... 기타 속성들
+    }
+    onPropertyChange(properties)
+  }
+
+  // 객체 이벤트 리스너 등록
+  selectedObject.on('moving', updateProperties)
+  selectedObject.on('scaling', updateProperties)
+  selectedObject.on('rotating', updateProperties)
+  selectedObject.on('modified', updateProperties)
+}
+```
+
+## 🔒 보안 및 안정성 규칙
+
+### 파일 처리
+- 모든 파일 경로 검증
+- 지원되는 파일 형식만 허용
+- 파일 크기 제한 적용
+
+### 메모리 관리
+- 이미지 로드 시 크기 제한
+- 사용하지 않는 객체 정리
+- 메모리 누수 방지
+
+### 사용자 입력 검증
+- 모든 사용자 입력 검증
+- SQL 인젝션 방지 (필요시)
+- XSS 방지 (필요시)
+
+## 📈 성능 최적화 규칙
+
+### 렌더링 최적화
+```python
+def update_preview_optimized(self):
+    """최적화된 미리보기 업데이트"""
+    # 불필요한 리페인트 방지
+    if not self.needs_update:
+        return
+    
+    self.scene.update()
+    self.needs_update = False
+```
+
+### 메모리 최적화
+```python
+def load_image_optimized(self, file_path, max_size=1000):
+    """최적화된 이미지 로드"""
+    pixmap = QPixmap(file_path)
+    
+    # 크기 제한
+    if pixmap.width() > max_size or pixmap.height() > max_size:
+        pixmap = pixmap.scaled(
+            max_size, max_size, 
+            Qt.KeepAspectRatio, 
+            Qt.SmoothTransformation
+        )
+    
+    return pixmap
+```
+
+## 🧪 테스트 및 품질 규칙
+
+### 코드 품질
+- 의미 있는 변수명 사용
+- 함수당 50줄 이하 유지
+- 복잡한 로직은 주석으로 설명
+
+### 에러 처리
+- 모든 예외 상황 처리
+- 사용자 친화적 에러 메시지
+- 로깅을 통한 문제 추적
+
+## 🔄 워크플로우
+
+### 새로운 기능 개발
+1. **Plan**: `plan.md` 생성 및 상세 계획 수립
+2. **Review**: 사용자가 계획 검토 및 승인
+3. **Act**: 승인된 계획에 따라 구현
+4. **Update**: 메모리 뱅크 업데이트
+
+### 버그 수정
+1. **Plan**: 문제 분석 및 해결 방안 수립
+2. **Review**: 해결 방안 검토
+3. **Act**: 수정 사항 구현
+4. **Test**: 수정 사항 검증
+
+## 📝 문서화 규칙
+
+### 필수 문서
+- 모든 새로운 기능에 대한 `plan.md` 생성
+- 중요한 변경사항은 `progress.md`에 기록
+- 복잡한 로직은 주석으로 설명
+
+### 메모리 뱅크 유지
+- 정기적인 문서 업데이트
+- 프로젝트 상태 반영
+- 팀원과의 지식 공유
+
+## 🎯 명찰 프로그램 특화 규칙
+
+### 명찰 디자인 규칙
+- 명찰 용지 기준 (9cm x 12.5cm, 360x500 픽셀)
+- 최소 여백 10px 유지
+- 텍스트 크기 8pt 이상
+- 이미지 비율 유지
+- 동적 캔버스 크기 조절 지원
+
+### 캔버스 크기 관리
+```javascript
+// 기본 캔버스 크기 설정
+const CANVAS_DIMENSIONS = {
+  width: 360,   // 9cm
+  height: 500,  // 12.5cm
+  ratio: 0.72   // 9/12.5
+}
+
+// 캔버스 크기 동적 조절
+const updateCanvasSize = (canvas, newWidth, newHeight) => {
+  canvas.setDimensions({
+    width: newWidth,
+    height: newHeight
+  })
+  
+  // 중앙 좌표 재계산
+  const centerX = newWidth / 2
+  const centerY = newHeight / 2
+  
+  // 모든 객체의 중앙 정렬 업데이트
+  canvas.getObjects().forEach(obj => {
+    if (obj.originX === 'center') {
+      obj.set('left', centerX)
+    }
+    if (obj.originY === 'center') {
+      obj.set('top', centerY)
+    }
+  })
+  
+  canvas.renderAll()
+}
+```
+
+### 데이터 검증 규칙
+- 이름: 1-20자, 특수문자 제한
+- 회사명: 1-50자
+- 직급: 1-20자
+- 이미지: 최대 5MB, 지원 형식만
+
+### 출력 규칙
+- 300 DPI 권장
+- CMYK 색상 권장
+- 세로 방향 고정
+- 정확한 cm 단위 출력
+
+---
+
+**중요**: 이 규칙들은 AI의 행동을 제어하고 프로젝트의 일관성을 유지하기 위한 것입니다. 모든 작업은 Plan/Act 모드를 준수하며, 메모리 뱅크를 적극 활용하여 컨텍스트를 유지하세요.
+
+---
+**작성일**: 2025년 9월 13일  
+**버전**: 1.0  
+**프로젝트**: 명찰 출력 프로그램

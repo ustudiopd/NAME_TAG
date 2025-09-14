@@ -51,7 +51,32 @@ def create_widget(self):
 
 ## 🎨 UI 컴포넌트 패턴
 
-### 텍스트 아이템 패턴
+### React 컴포넌트 패턴 (Next.js)
+```javascript
+// 조건부 렌더링 패턴
+const PropertyPanel = ({ selectedObject, onPropertyChange }) => {
+  const objectType = selectedObject?.type || 'unknown'
+  const isTextObject = objectType === 'i-text' || objectType === 'text'
+  const isImageObject = objectType === 'image'
+  
+  return (
+    <div>
+      {isTextObject && <TextProperties />}
+      {isImageObject && <ImageProperties />}
+    </div>
+  )
+}
+
+// 이벤트 처리 패턴
+const handleSelection = (e) => {
+  const activeObject = e.selected?.[0]
+  if (activeObject && onPropertyChange) {
+    onPropertyChange('selectedObject', activeObject)
+  }
+}
+```
+
+### 텍스트 아이템 패턴 (Legacy PyQt5)
 ```python
 class CenteredTextItem(QGraphicsTextItem):
     positionChanged = pyqtSignal(float, float)
@@ -76,7 +101,27 @@ def load_image(self, file_path):
 
 ## 🔄 이벤트 처리 패턴
 
-### 드래그 앤 드롭
+### React 이벤트 처리 (Next.js)
+```javascript
+// Fabric.js 캔버스 이벤트 처리
+canvas.on('selection:created', (e) => {
+  const activeObject = e.selected?.[0]
+  if (activeObject) {
+    onPropertyChange('selectedObject', activeObject)
+  }
+})
+
+// 속성 변경 이벤트
+const handlePropertyChange = (property, value) => {
+  const newProperties = { ...properties, [property]: value }
+  setProperties(newProperties)
+  if (onPropertyChange) {
+    onPropertyChange(property, value)
+  }
+}
+```
+
+### 드래그 앤 드롭 (Legacy PyQt5)
 ```python
 def mouseMoveEvent(self, event):
     if event.buttons() == Qt.LeftButton:
@@ -95,7 +140,45 @@ def setup_menu_actions(self):
 
 ## 📊 데이터 관리 패턴
 
-### 엑셀 데이터 처리
+### Supabase 데이터 처리 (Next.js)
+```javascript
+// 템플릿 저장 (최적화된 JSON)
+const saveNamecardTemplate = async (templateData) => {
+  const optimizedData = {
+    objects: templateData.objects.map(obj => ({
+      type: obj.type,
+      left: obj.left,
+      top: obj.top,
+      width: obj.width,
+      height: obj.height,
+      fontSize: obj.fontSize,
+      fontFamily: obj.fontFamily,
+      fill: obj.fill,
+      textAlign: obj.textAlign,
+      scaleX: obj.scaleX,
+      scaleY: obj.scaleY,
+      angle: obj.angle,
+      opacity: obj.opacity,
+      // 이미지는 URL만 저장 (base64 제외)
+      src: obj.src || obj.image?.src
+    }))
+  }
+  
+  const { data, error } = await supabase
+    .from('namecard_templates')
+    .insert({ template_data: optimizedData })
+}
+
+// Supabase Storage 이미지 업로드
+const uploadImage = async (file) => {
+  const sanitizedName = sanitizeFileName(file.name)
+  const { data, error } = await supabase.storage
+    .from('namecard-images')
+    .upload(sanitizedName, file)
+}
+```
+
+### 엑셀 데이터 처리 (Legacy PyQt5)
 ```python
 def load_excel_data(self):
     try:
@@ -141,7 +224,33 @@ def update_text(self, text_item, new_text):
 
 ## 🔒 에러 처리 패턴
 
-### 예외 처리
+### React 에러 처리 (Next.js)
+```javascript
+// 안전한 속성 접근
+const getObjectProperties = (obj) => {
+  if (!obj) return null
+  
+  return {
+    left: Math.round(obj.left || 0),
+    top: Math.round(obj.top || 0),
+    fontSize: obj.fontSize || 16,
+    fontFamily: obj.fontFamily || 'Arial',
+    // undefined 방어 코드
+  }
+}
+
+// Supabase 에러 처리
+const handleSupabaseError = (error, operation) => {
+  console.error(`${operation} failed:`, error)
+  if (error.message.includes('Invalid key')) {
+    alert('파일명에 특수문자가 포함되어 있습니다.')
+  } else if (error.message.includes('row-level security')) {
+    alert('권한이 없습니다. 관리자에게 문의하세요.')
+  }
+}
+```
+
+### 예외 처리 (Legacy PyQt5)
 ```python
 def safe_operation(self, operation, error_message):
     try:
@@ -184,7 +293,66 @@ class Config:
     SUPPORTED_IMAGE_FORMATS = ['.png', '.jpg', '.jpeg', '.bmp']
 ```
 
+## 🆕 최신 패턴 업데이트 (2025-01-27)
+
+### JSON 최적화 패턴
+```javascript
+// 템플릿 데이터 최적화 (99% 크기 감소)
+const optimizeTemplateData = (fabricObjects) => {
+  return fabricObjects.map(obj => ({
+    // 필수 속성만 추출
+    type: obj.type,
+    left: obj.left,
+    top: obj.top,
+    width: obj.width,
+    height: obj.height,
+    // 텍스트 속성
+    fontSize: obj.fontSize,
+    fontFamily: obj.fontFamily,
+    fill: obj.fill,
+    textAlign: obj.textAlign,
+    // 변환 속성
+    scaleX: obj.scaleX,
+    scaleY: obj.scaleY,
+    angle: obj.angle,
+    opacity: obj.opacity,
+    // 이미지는 URL만 저장 (base64 제외)
+    src: obj.src || obj.image?.src
+  }))
+}
+```
+
+### 파일명 정리 패턴
+```javascript
+// Supabase Storage 호환 파일명 생성
+const sanitizeFileName = (filename) => {
+  return filename
+    .replace(/[^a-zA-Z0-9.-]/g, '_')  // 특수문자 제거
+    .replace(/_+/g, '_')              // 연속 언더스코어 제거
+    .toLowerCase()                    // 소문자 변환
+}
+```
+
+### 조건부 렌더링 패턴
+```javascript
+// 객체 타입별 속성 패널 렌더링
+const renderPropertySection = (objectType, properties) => {
+  switch (objectType) {
+    case 'i-text':
+    case 'text':
+      return <TextProperties properties={properties} />
+    case 'image':
+      return <ImageProperties properties={properties} />
+    case 'background':
+      return <BackgroundProperties properties={properties} />
+    default:
+      return <BasicProperties properties={properties} />
+  }
+}
+```
+
 ---
 **작성일**: 2025년 9월 13일  
-**버전**: 1.0  
+**업데이트**: 2025년 1월 27일 오후 4:00  
+**버전**: 2.0 (Next.js 웹 애플리케이션)  
 **프로젝트**: 명찰 출력 프로그램

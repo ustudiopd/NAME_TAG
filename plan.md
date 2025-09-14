@@ -1,269 +1,388 @@
-# 명찰 제작 시스템 개발 플랜
+# 명찰 출력 프로그램 - 템플릿 로드 오류 해결 플랜
 
-## 🎯 현재 상황 분석
+## 📋 현재 상황 분석
 
-### ✅ 완료된 것들
-- Supabase 연동 및 데이터베이스 설정
-- 기본 UI 레이아웃 (3단 컬럼)
-- 명단 목록 표시
-- 명단 추가 폼
-- 체크인 상태 관리 UI
+### **핵심 문제점**
 
-### ❌ 아직 구현되지 않은 핵심 기능들
-- Fabric.js 캔버스 (명찰 편집의 핵심!)
-- 실제 데이터 연동 (현재는 UI만 있음)
-- 엑셀 업로드
-- 이미지 관리
-- 템플릿 저장/불러오기
-- 인쇄 기능
+현재 `CanvasEditor_new.js`의 `loadTemplate` 함수에서 템플릿 JSON이 제대로 로드되지 않는 문제가 발생하고 있습니다.
 
----
+**주요 원인:**
+1. **비동기 처리 문제**: `loadOptimizedTemplate` 함수가 `async`로 선언되었지만 `await` 없이 호출됨
+2. **에러 처리 부족**: 에러 발생 시 `createDefaultTemplate`으로 대체하여 문제가 숨겨짐
+3. **이미지 로드 타이밍**: 배경 이미지와 일반 이미지 로드가 비동기로 처리되어 완료 시점을 기다리지 않음
 
-## 🚀 전체 개발 플랜 (우선순위별)
+### **현재 코드 구조 분석**
 
-### **Phase 1: 핵심 캔버스 기능 (1-2주)**
-**목표**: PyQt의 QGraphicsScene을 웹으로 구현
+```javascript
+// 현재 loadTemplate 함수 (454-530줄)
+const loadTemplate = (template) => {
+  // ... 유효성 검사
+  if (templateData.version === '1.0') {
+    loadOptimizedTemplate(canvas, templateData) // ← async 함수를 await 없이 호출
+  } else {
+    canvas.loadFromJSON(jsonData, callback) // ← 정상 작동
+  }
+}
 
-#### 1.1 Fabric.js 캔버스 구현 🔥
-- 중앙 영역에 실제 캔버스 추가
-- 드래그 가능한 텍스트 객체 (회사명, 이름, 직급)
-- 객체 선택/이동/크기조절 기능
-- 캔버스 초기화 및 기본 설정
+// loadOptimizedTemplate 함수 (533줄부터)
+const loadOptimizedTemplate = async (canvas, templateData) => {
+  // ... 캔버스 설정
+  // ... 배경 이미지 로드 (비동기)
+  // ... 객체들 복원 (비동기 이미지 포함)
+  canvas.renderAll() // ← 모든 비동기 작업 완료 전에 호출
+}
+```
 
-#### 1.2 속성 패널 구현 🔥
-- 우측 패널에 선택된 객체의 속성 표시
-- X, Y 좌표, 폰트 크기, 색상 등 실시간 조절
-- 슬라이더와 입력창으로 직관적 조작
-- 폰트 패밀리, 스타일 선택
+-----
 
-#### 1.3 우클릭 컨텍스트 메뉴
-- 폰트 크기 조절
-- 볼드체/이탤릭체 토글
-- 객체 복사/삭제
-- 레이어 순서 조절
+## 🎯 해결 방안
 
----
+### **1단계: 즉시 수정 (High Priority)**
 
-### **Phase 2: 데이터 연동 및 파일 처리 (1주)**
-**목표**: 실제 데이터와 연동하여 완전한 워크플로우 구현
+#### A. `loadTemplate` 함수 수정
+```javascript
+const loadTemplate = async (template) => {
+  if (!fabricCanvasRef.current) return
 
-#### 2.1 실제 데이터 연동 🔥
-- 명단 선택 시 캔버스에 실제 데이터 반영
-- Supabase와 실시간 동기화
-- 로딩 상태 및 에러 처리
-- 데이터 검증 및 유효성 검사
+  console.log('Loading template:', template)
+  
+  if (!template) {
+    console.error('Template data not provided')
+    return
+  }
+  
+  if (!template.canvas_json) {
+    console.error('Template JSON data not provided')
+    return
+  }
 
-#### 2.2 엑셀 파일 업로드
-- 드래그 앤 드롭으로 엑셀 파일 업로드
-- XLSX.js로 클라이언트 사이드 파싱
-- 대량 데이터 Supabase에 일괄 삽입
-- 진행률 표시 및 에러 처리
+  try {
+    const canvas = fabricCanvasRef.current
+    console.log('Clearing canvas...')
+    
+    // 기존 객체들 모두 제거
+    canvas.clear()
+    
+    const templateData = template.canvas_json
+    
+    // JSON 데이터 검증 강화
+    if (!templateData || typeof templateData !== 'object') {
+      console.error('Invalid template JSON data:', templateData)
+      return
+    }
+    
+    console.log('Template data structure:', {
+      hasVersion: !!templateData.version,
+      version: templateData.version,
+      hasObjects: !!templateData.objects,
+      objectCount: templateData.objects?.length || 0,
+      hasCanvas: !!templateData.canvas
+    })
+    
+    // 최적화된 JSON인지 확인
+    if (templateData.version === '1.0') {
+      // 최적화된 JSON 처리 - await 추가
+      await loadOptimizedTemplate(canvas, templateData)
+    } else {
+      // 기존 Fabric.js JSON 처리 (하위 호환성)
+      const jsonData = Array.isArray(templateData) 
+        ? { objects: templateData, version: '5.3.0' }
+        : templateData
+      
+      await new Promise((resolve, reject) => {
+        canvas.loadFromJSON(jsonData, () => {
+          console.log('Template JSON loaded, rendering...')
+          
+          // 모든 객체에 setCoords() 호출 및 텍스트 객체 속성 설정
+          canvas.getObjects().forEach(obj => {
+            obj.setCoords()
+            
+            // 텍스트 객체인 경우 크기 조절 제한 설정
+            if (obj.type === 'i-text' || obj.type === 'text') {
+              obj.set({
+                lockScalingX: true,
+                lockScalingY: true,
+                lockUniScaling: true
+              })
+            }
+          })
+          
+          canvas.renderAll()
+          setIsTemplateLoaded(true)
+          console.log('Template loaded successfully:', template.template_name)
+          resolve()
+        }, (error) => {
+          console.error('Error in loadFromJSON callback:', error)
+          reject(error)
+        })
+      })
+    }
+    
+  } catch (error) {
+    console.error('Error loading template:', error)
+    // createDefaultTemplate 호출 제거 - 에러를 명확히 표시
+    alert(`템플릿 로드 실패: ${error.message}`)
+  }
+}
+```
 
-#### 2.3 이미지 관리
-- 배경 이미지 업로드 (Supabase Storage)
-- 이미지 크기 조절 및 위치 조정
-- 이미지 미리보기 및 갤러리
-- 이미지 최적화 및 압축
+#### B. `loadOptimizedTemplate` 함수 수정
+```javascript
+const loadOptimizedTemplate = async (canvas, templateData) => {
+  try {
+    // 캔버스 크기 설정
+    if (templateData.canvas) {
+      canvas.setWidth(templateData.canvas.width)
+      canvas.setHeight(templateData.canvas.height)
+      canvas.setBackgroundColor(templateData.canvas.backgroundColor, canvas.renderAll.bind(canvas))
+    }
+    
+    // 비동기 작업들을 Promise로 관리
+    const asyncTasks = []
+    
+    // 배경 이미지 로드
+    if (templateData.backgroundImage) {
+      setBackgroundImage(templateData.backgroundImage)
+      
+      const backgroundPromise = new Promise((resolve, reject) => {
+        fabric.Image.fromURL(templateData.backgroundImage.url, (img) => {
+          if (!img) {
+            reject(new Error('Background image load failed'))
+            return
+          }
+          
+          img.set({
+            left: 0,
+            top: 0,
+            scaleX: 340 / img.width,
+            scaleY: 472 / img.height,
+            selectable: true,
+            evented: true,
+            opacity: backgroundOpacity,
+            type: 'background',
+            crossOrigin: 'anonymous'
+          })
+          
+          img.setCoords()
+          canvas.add(img)
+          canvas.sendToBack(img)
+          resolve()
+        }, { crossOrigin: 'anonymous' })
+      })
+      asyncTasks.push(backgroundPromise)
+    }
+    
+    // 객체들 복원
+    for (const objData of templateData.objects || []) {
+      if (objData.type === 'i-text' || objData.type === 'text') {
+        // 텍스트 객체는 동기 처리
+        const textObj = new fabric.IText(objData.text || '', {
+          left: objData.left,
+          top: objData.top,
+          width: objData.width,
+          height: objData.height,
+          fontSize: objData.fontSize,
+          fontFamily: objData.fontFamily,
+          fontWeight: objData.fontWeight,
+          fontStyle: objData.fontStyle,
+          fill: objData.fill,
+          textAlign: objData.textAlign,
+          angle: objData.angle,
+          scaleX: objData.scaleX || 1,
+          scaleY: objData.scaleY || 1,
+          originX: objData.originX || 'left',
+          originY: objData.originY || 'top',
+          lockScalingX: true,
+          lockScalingY: true,
+          lockUniScaling: true
+        })
+        textObj.setCoords()
+        canvas.add(textObj)
+        
+      } else if (objData.type === 'image') {
+        // 이미지 객체는 비동기 처리
+        const imagePromise = new Promise((resolve, reject) => {
+          fabric.Image.fromURL(objData.src, (img) => {
+            if (!img) {
+              reject(new Error(`Image load failed: ${objData.src}`))
+              return
+            }
+            
+            img.set({
+              left: objData.left,
+              top: objData.top,
+              scaleX: objData.scaleX,
+              scaleY: objData.scaleY,
+              angle: objData.angle,
+              crossOrigin: 'anonymous'
+            })
+            img.setCoords()
+            canvas.add(img)
+            resolve()
+          }, { crossOrigin: 'anonymous' })
+        })
+        asyncTasks.push(imagePromise)
+        
+      } else if (objData.type === 'background') {
+        // 배경 이미지 객체는 이미 위에서 처리됨
+        continue
+        
+      } else {
+        // 기타 객체들 (Rect, Circle 등)
+        const obj = new fabric[objData.type.charAt(0).toUpperCase() + objData.type.slice(1)]({
+          left: objData.left,
+          top: objData.top,
+          width: objData.width,
+          height: objData.height,
+          fill: objData.fill,
+          stroke: objData.stroke,
+          strokeWidth: objData.strokeWidth,
+          angle: objData.angle,
+          scaleX: objData.scaleX || 1,
+          scaleY: objData.scaleY || 1
+        })
+        obj.setCoords()
+        canvas.add(obj)
+      }
+    }
+    
+    // 모든 비동기 작업 완료 대기
+    if (asyncTasks.length > 0) {
+      await Promise.all(asyncTasks)
+    }
+    
+    // 최종 렌더링
+    canvas.renderAll()
+    setIsTemplateLoaded(true)
+    console.log('Optimized template loaded successfully')
+    
+  } catch (error) {
+    console.error('Error loading optimized template:', error)
+    throw error // 에러를 상위로 전파
+  }
+}
+```
 
----
+### **2단계: 에러 처리 개선 (Medium Priority)**
 
-### **Phase 3: 고급 기능 (1주)**
-**목표**: 사용성과 편의성 향상
+#### A. 사용자 친화적 에러 메시지
+```javascript
+// 에러 타입별 메시지 분류
+const getErrorMessage = (error) => {
+  if (error.message.includes('image load failed')) {
+    return '이미지 로드에 실패했습니다. 이미지 파일을 확인해주세요.'
+  } else if (error.message.includes('Invalid template JSON')) {
+    return '템플릿 데이터 형식이 올바르지 않습니다.'
+  } else if (error.message.includes('Template data not provided')) {
+    return '템플릿 정보가 없습니다.'
+  } else {
+    return `템플릿 로드 중 오류가 발생했습니다: ${error.message}`
+  }
+}
+```
 
-#### 3.1 템플릿 시스템
-- 명찰 디자인 JSON으로 저장
-- 템플릿 불러오기/내보내기
-- 여러 템플릿 관리
-- 템플릿 미리보기
+#### B. 로딩 상태 표시
+```javascript
+// 로딩 상태 추가
+const [isLoading, setIsLoading] = useState(false)
 
-#### 3.2 인쇄 기능
-- 브라우저 인쇄 API 활용
-- 인쇄용 CSS 최적화
-- 미리보기 기능
-- 페이지 설정 및 레이아웃
+const loadTemplate = async (template) => {
+  setIsLoading(true)
+  try {
+    // ... 로드 로직
+  } catch (error) {
+    // ... 에러 처리
+  } finally {
+    setIsLoading(false)
+  }
+}
+```
 
-#### 3.3 QR 코드 체크인
-- 각 명찰에 QR 코드 생성
-- 모바일 체크인 페이지
-- 실시간 체크인 상태 업데이트
-- 체크인 통계 및 리포트
+### **3단계: 디버깅 강화 (Low Priority)**
 
----
+#### A. 상세한 로그 추가
+```javascript
+console.log('Template loading started:', {
+  templateId: template.id,
+  templateName: template.template_name,
+  hasCanvasJson: !!template.canvas_json,
+  jsonSize: JSON.stringify(template.canvas_json).length
+})
+```
 
-### **Phase 4: 최적화 및 배포 (3-5일)**
-**목표**: 프로덕션 준비
+#### B. 템플릿 검증 함수
+```javascript
+const validateTemplate = (template) => {
+  const errors = []
+  
+  if (!template) {
+    errors.push('Template is null or undefined')
+  } else {
+    if (!template.canvas_json) {
+      errors.push('canvas_json is missing')
+    } else {
+      const data = template.canvas_json
+      if (!data.objects || !Array.isArray(data.objects)) {
+        errors.push('objects array is missing or invalid')
+      }
+      if (data.version && data.version !== '1.0') {
+        errors.push(`Unsupported version: ${data.version}`)
+      }
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  }
+}
+```
 
-#### 4.1 성능 최적화
-- 대용량 명단 처리 최적화
-- 캔버스 렌더링 최적화
-- 로딩 상태 개선
-- 메모리 사용량 최적화
+-----
 
-#### 4.2 반응형 디자인
-- 모바일/태블릿 최적화
-- 터치 제스처 지원
-- 적응형 레이아웃
-- 접근성 개선
+## 🧪 테스트 시나리오
 
-#### 4.3 배포 및 테스트
-- Vercel 배포
-- 브라우저 호환성 테스트
-- 사용자 테스트
-- 성능 모니터링
+### **1. 기본 템플릿 로드 테스트**
+1. 템플릿 저장 → 불러오기 → 캔버스에 객체 표시 확인
+2. 텍스트 객체의 크기 조절 제한 확인
+3. 이미지 객체의 정확한 위치 및 크기 확인
 
----
+### **2. 에러 상황 테스트**
+1. 잘못된 JSON 구조의 템플릿 로드
+2. 존재하지 않는 이미지 URL 포함 템플릿
+3. 네트워크 오류 상황
 
-## 🎯 즉시 시작할 작업
+### **3. 성능 테스트**
+1. 대용량 이미지가 포함된 템플릿
+2. 많은 객체가 포함된 템플릿
+3. 동시에 여러 템플릿 로드
 
-### **Phase 1의 첫 번째 작업**부터 시작하는 것을 추천합니다:
+-----
 
-1. **Fabric.js 캔버스 구현** - 가장 핵심적인 기능
-2. **실제 데이터 연동** - 현재 UI가 실제로 작동하도록
+## 📊 우선순위별 실행 계획
 
----
+### **Phase 1: 핵심 수정 (1-2일)**
+- [ ] `loadTemplate` 함수에 `async/await` 적용
+- [ ] `loadOptimizedTemplate` 함수의 비동기 처리 개선
+- [ ] 에러 처리에서 `createDefaultTemplate` 제거
 
-## 📋 상세 작업 목록
+### **Phase 2: 사용자 경험 개선 (2-3일)**
+- [ ] 로딩 상태 표시 추가
+- [ ] 사용자 친화적 에러 메시지
+- [ ] 템플릿 검증 로직 추가
 
-### Phase 1: 핵심 캔버스 기능
-- [ ] Fabric.js 캔버스 초기화
-- [ ] 드래그 가능한 텍스트 객체 생성
-- [ ] 객체 선택/이동/크기조절 기능
-- [ ] 우측 속성 패널 구현
-- [ ] 실시간 속성 연동
-- [ ] 우클릭 컨텍스트 메뉴
-- [ ] 폰트 및 스타일 조절
-
-### Phase 2: 데이터 연동 및 파일 처리
-- [ ] 명단 선택 시 캔버스 데이터 반영
-- [ ] Supabase 실시간 동기화
-- [ ] 엑셀 파일 업로드 기능
-- [ ] 이미지 업로드 및 관리
-- [ ] 에러 처리 및 로딩 상태
-
-### Phase 3: 고급 기능
-- [ ] 템플릿 저장/불러오기
-- [ ] 인쇄 기능 구현
-- [ ] QR 코드 생성
-- [ ] 체크인 시스템
-
-### Phase 4: 최적화 및 배포
+### **Phase 3: 디버깅 및 최적화 (3-5일)**
+- [ ] 상세한 로그 시스템 구축
 - [ ] 성능 최적화
-- [ ] 반응형 디자인
-- [ ] Vercel 배포
-- [ ] 최종 테스트
+- [ ] 테스트 케이스 추가
 
----
+-----
 
-## 🛠 기술 스택
+## 🎯 기대 효과
 
-- **프론트엔드**: Next.js 14, React 18, Tailwind CSS
-- **백엔드**: Supabase (PostgreSQL, Auth, Storage)
-- **캔버스**: Fabric.js
-- **파일 처리**: XLSX.js
-- **배포**: Vercel
+1. **템플릿 로드 성공률 100%**: 비동기 처리 개선으로 모든 템플릿이 정확히 로드됨
+2. **사용자 경험 향상**: 명확한 에러 메시지와 로딩 상태 표시
+3. **개발 효율성 증대**: 상세한 디버깅 정보로 문제 해결 시간 단축
+4. **시스템 안정성**: 에러 상황에서도 앱이 크래시되지 않음
 
----
-
-## 📊 데이터베이스 스키마
-
-### profiles 테이블
-| 컬럼명 | 타입 | 설명 |
-|--------|------|------|
-| id | uuid | 기본 키 |
-| created_at | timestamptz | 생성 시간 |
-| company | text | 회사명 |
-| name | text | 이름 |
-| title | text | 직급 |
-| is_checked_in | boolean | 체크인 상태 |
-| checked_in_at | timestamptz | 체크인 시간 |
-
-### Storage
-- **namecard-images**: 배경 이미지 저장용 공개 버킷
-
----
-
-## 🔧 개발 가이드
-
-### 프로젝트 구조
-```
-├── app/                    # Next.js App Router
-│   ├── globals.css        # 전역 스타일
-│   ├── layout.js          # 루트 레이아웃
-│   └── page.js            # 메인 페이지
-├── components/            # React 컴포넌트
-│   ├── ProfileList.js     # 명단 목록
-│   ├── ProfileForm.js     # 명단 추가 폼
-│   ├── CanvasEditor.js    # 캔버스 편집기
-│   └── PropertyPanel.js   # 속성 패널
-├── lib/                   # 유틸리티 함수
-│   ├── supabaseClient.js  # Supabase 클라이언트
-│   ├── database.js        # 데이터베이스 함수
-│   └── storage.js         # 스토리지 함수
-└── memory_bank/           # 프로젝트 문서
-```
-
-### 주요 함수
-- `getAllProfiles()`: 모든 프로필 조회
-- `createProfile()`: 프로필 생성
-- `updateProfile()`: 프로필 업데이트
-- `updateCheckInStatus()`: 체크인 상태 업데이트
-- `uploadImage()`: 이미지 업로드
-- `createProfilesBulk()`: 대량 프로필 생성
-
----
-
-## 🚀 배포
-
-### Vercel 배포
-1. GitHub 저장소에 코드 푸시
-2. Vercel에서 프로젝트 연결
-3. 환경 변수 설정
-4. 자동 배포 완료
-
----
-
-## 📝 사용법
-
-1. **명단 추가**: 우상단 "명단 추가" 버튼 클릭
-2. **명단 선택**: 좌측 목록에서 명단 클릭하여 편집
-3. **체크인 관리**: 각 명단의 체크인 버튼으로 상태 변경
-4. **명찰 편집**: 중앙 캔버스에서 드래그 앤 드롭으로 디자인
-5. **이미지 추가**: 배경 이미지 업로드 및 적용
-6. **설정 저장**: JSON 형태로 템플릿 저장/불러오기
-
----
-
-## 🔒 보안
-
-- Row Level Security (RLS) 활성화
-- 환경 변수를 통한 API 키 관리
-- 파일 업로드 크기 제한 (5MB)
-- 이미지 타입 검증
-
----
-
-## 📱 반응형 지원
-
-- 모바일: 세로 레이아웃, 터치 최적화
-- 태블릿: 적응형 그리드 레이아웃
-- 데스크톱: 3단 컬럼 레이아웃
-
----
-
-## 🤝 기여하기
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
-
-## 라이선스
-MIT License
-
----
-
-### GitHub 저장소
-- [https://github.com/ustudiopd/name_tag.git](https://github.com/ustudiopd/name_tag.git)
+**이 플랜을 단계별로 실행하면 템플릿 로드 문제가 완전히 해결될 것입니다.**

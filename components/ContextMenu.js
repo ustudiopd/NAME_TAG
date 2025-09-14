@@ -99,6 +99,18 @@ export default function ContextMenu({
       action: () => handleAction('bringToFront')
     },
     {
+      id: 'bring-forward',
+      label: '앞으로',
+      icon: '⬆️',
+      action: () => handleAction('bringForward')
+    },
+    {
+      id: 'send-backward',
+      label: '뒤로',
+      icon: '⬇️',
+      action: () => handleAction('sendBackward')
+    },
+    {
       id: 'send-to-back',
       label: '맨 뒤로',
       icon: '⬇️',
