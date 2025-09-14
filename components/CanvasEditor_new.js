@@ -324,20 +324,21 @@ export default function CanvasEditor({
     canvas.renderAll()
     
     // 배포 환경에서 안정적인 렌더링을 위한 다중 렌더링
-    setTimeout(() => {
+    const forceRender = () => {
       canvas.renderAll()
-      console.log('Canvas force rendered after initialization (1st)')
-    }, 100)
+      console.log('Canvas force rendered')
+    }
     
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after initialization (2nd)')
-    }, 300)
-    
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after initialization (3rd)')
-    }, 500)
+    // 여러 번 강제 렌더링
+    setTimeout(forceRender, 50)
+    setTimeout(forceRender, 100)
+    setTimeout(forceRender, 200)
+    setTimeout(forceRender, 300)
+    setTimeout(forceRender, 500)
+    setTimeout(forceRender, 800)
+    setTimeout(forceRender, 1000)
+    setTimeout(forceRender, 1500)
+    setTimeout(forceRender, 2000)
     
     // 최종 렌더링 확인
     setTimeout(() => {
