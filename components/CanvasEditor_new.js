@@ -1236,12 +1236,14 @@ export default function CanvasEditor({
 
     if (selectedProfile) {
       // 프로필이 선택된 경우 해당 프로필로 업데이트
+      console.log('CanvasEditor: Updating canvas with profile:', selectedProfile.name)
       updateCanvasWithProfile(selectedProfile)
     } else {
       // 프로필이 선택되지 않은 경우 기본 템플릿으로 초기화
+      console.log('CanvasEditor: Initializing canvas with default template')
       initializeCanvasWithDefaultTemplate()
     }
-  }, [selectedProfile, isCanvasReady])
+  }, [selectedProfile, isCanvasReady, updateCanvasWithProfile, initializeCanvasWithDefaultTemplate])
 
   // 외부에서 템플릿 로드 호출 가능하도록 노출 (캔버스 준비 후)
   useEffect(() => {
