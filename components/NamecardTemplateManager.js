@@ -8,7 +8,8 @@ import {
   deleteNamecardTemplate,
   setDefaultTemplate,
   duplicateNamecardTemplate,
-  testSupabaseConnection
+  testSupabaseConnection,
+  migrateTemplatesToGlobal
 } from '../lib/namecardDatabase'
 
 export default function NamecardTemplateManager({ 
@@ -26,17 +27,17 @@ export default function NamecardTemplateManager({
   const [selectedTemplateJson, setSelectedTemplateJson] = useState(null)
 
   useEffect(() => {
-    if (eventId) {
-      loadTemplates()
-    }
-  }, [eventId])
+    loadTemplates()
+  }, []) // eventId 의존성 제거 - 전역 템플릿은 eventId와 무관
 
   const loadTemplates = async () => {
     try {
       setLoading(true)
-      const { data, error } = await getNamecardTemplates(eventId)
+      // eventId는 무시하고 모든 전역 템플릿을 로드
+      const { data, error } = await getNamecardTemplates(null)
       if (error) throw error
       setTemplates(data || [])
+      console.log('Loaded global templates:', data?.length || 0)
     } catch (err) {
       console.error('Error loading templates:', err)
     } finally {
@@ -45,7 +46,7 @@ export default function NamecardTemplateManager({
   }
 
   const handleSaveTemplate = async () => {
-    console.log('Saving template:', { templateName, currentCanvasJson, eventId })
+    console.log('Saving global template:', { templateName, currentCanvasJson, eventId })
     
     if (!templateName.trim()) {
       alert('템플릿 이름을 입력해주세요.')
@@ -66,13 +67,22 @@ export default function NamecardTemplateManager({
         throw new Error(`데이터베이스 연결 실패: ${connectionTest.error?.message}`)
       }
       
-      const { data, error } = await saveNamecardTemplate(eventId, templateName.trim(), currentCanvasJson)
+      // 전역 템플릿으로 저장
+      const result = await saveNamecardTemplate(eventId, templateName.trim(), currentCanvasJson)
+      const { data, error } = result
+      
       if (error) throw error
       
-      console.log('Template saved successfully:', data)
-      setTemplates(prev => [data, ...prev])
+      if (data) {
+        setTemplates(prev => [data, ...prev])
+      }
+      
+      console.log('Global template saved successfully:', data)
       setTemplateName('')
       setShowSaveForm(false)
+      
+      // 템플릿 목록 새로고침
+      await loadTemplates()
       
       if (onTemplateSave) {
         onTemplateSave(data)
@@ -92,6 +102,7 @@ export default function NamecardTemplateManager({
 
     try {
       const { error } = await deleteNamecardTemplate(templateId)
+      
       if (error) throw error
       
       setTemplates(prev => prev.filter(t => t.id !== templateId))
@@ -128,6 +139,7 @@ export default function NamecardTemplateManager({
     }
   }
 
+
   const handleLoadTemplate = async (templateId) => {
     try {
       setLoading(true)
@@ -160,6 +172,28 @@ export default function NamecardTemplateManager({
     }
   }
 
+  const handleMigrateTemplates = async () => {
+    if (!confirm('기존 행사별 템플릿들을 전역 템플릿으로 마이그레이션하시겠습니까?')) return
+
+    try {
+      setLoading(true)
+      const result = await migrateTemplatesToGlobal()
+      
+      if (result.success) {
+        alert(`마이그레이션 완료!\n- 마이그레이션된 템플릿: ${result.migratedCount}개\n- 총 전역 템플릿: ${result.totalGlobalTemplates}개`)
+        // 템플릿 목록 새로고침
+        await loadTemplates()
+      } else {
+        alert(`마이그레이션 실패: ${result.error?.message || '알 수 없는 오류'}`)
+      }
+    } catch (err) {
+      console.error('Error migrating templates:', err)
+      alert('마이그레이션 중 오류가 발생했습니다.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-4 text-center">
@@ -179,19 +213,29 @@ export default function NamecardTemplateManager({
             {templates.length}개의 템플릿이 저장되어 있습니다
           </p>
         </div>
-        <button
-          onClick={() => setShowSaveForm(true)}
-          className={`px-3 py-2 rounded-md transition-colors text-sm font-medium ${
-            currentCanvasJson 
-              ? 'bg-blue-600 text-white hover:bg-blue-700' 
-              : 'bg-gray-400 text-gray-200 cursor-not-allowed'
-          }`}
-          disabled={!currentCanvasJson}
-          title={currentCanvasJson ? '현재 디자인을 템플릿으로 저장' : '명찰을 편집한 후 저장 가능'}
-        >
-          {currentCanvasJson ? '현재 디자인 저장' : '저장 불가 (편집 필요)'}
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={handleMigrateTemplates}
+            className="px-3 py-2 rounded-md transition-colors text-sm font-medium bg-purple-600 text-white hover:bg-purple-700"
+            title="기존 행사별 템플릿들을 전역으로 마이그레이션"
+          >
+            마이그레이션
+          </button>
+          <button
+            onClick={() => setShowSaveForm(true)}
+            className={`px-3 py-2 rounded-md transition-colors text-sm font-medium ${
+              currentCanvasJson 
+                ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+            }`}
+            disabled={!currentCanvasJson}
+            title={currentCanvasJson ? '현재 디자인을 템플릿으로 저장' : '명찰을 편집한 후 저장 가능'}
+          >
+            {currentCanvasJson ? '현재 디자인 저장' : '저장 불가 (편집 필요)'}
+          </button>
+        </div>
       </div>
+
 
       {/* 저장 폼 */}
       {showSaveForm && (
@@ -235,68 +279,68 @@ export default function NamecardTemplateManager({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {templates.map((template) => (
-              <div
-                key={template.id}
-                className={`p-2 rounded border cursor-pointer transition-colors ${
-                  template.is_default
-                    ? 'bg-blue-50 border-blue-200'
-                    : 'bg-white border-gray-200 hover:bg-gray-50'
-                }`}
-                onClick={() => handleTemplateSelect(template)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-1 mb-1">
-                      <h4 className="text-xs font-medium text-gray-900 truncate">
-                        {template.template_name}
-                      </h4>
-                      {template.is_default && (
-                        <span className="text-xs bg-blue-100 text-blue-700 px-1 py-0.5 rounded-full">
-                          기본
-                        </span>
-                      )}
+                <div
+                  key={template.id}
+                  className={`p-2 rounded border cursor-pointer transition-colors ${
+                    template.is_default
+                      ? 'bg-blue-50 border-blue-200'
+                      : 'bg-white border-gray-200 hover:bg-gray-50'
+                  }`}
+                  onClick={() => handleTemplateSelect(template)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center space-x-1 mb-1">
+                        <h4 className="text-xs font-medium text-gray-900 truncate">
+                          {template.template_name}
+                        </h4>
+                        {template.is_default && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-1 py-0.5 rounded-full">
+                            기본
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        {new Date(template.created_at).toLocaleDateString('ko-KR')}
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-500">
-                      {new Date(template.created_at).toLocaleDateString('ko-KR')}
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-1 ml-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleLoadTemplate(template.id)
-                      }}
-                      className="text-blue-500 hover:text-blue-700 p-1"
-                      title="불러오기"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleDuplicateTemplate(template)
-                      }}
-                      className="text-gray-400 hover:text-gray-600 p-1"
-                      title="복사"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleShowJson(template)
-                      }}
-                      className="text-purple-500 hover:text-purple-700 p-1"
-                      title="JSON 보기"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </button>
+                    <div className="flex items-center space-x-1 ml-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleLoadTemplate(template.id)
+                        }}
+                        className="text-blue-500 hover:text-blue-700 p-1"
+                        title="불러오기"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDuplicateTemplate(template)
+                        }}
+                        className="text-gray-400 hover:text-gray-600 p-1"
+                        title="복사"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleShowJson(template)
+                        }}
+                        className="text-purple-500 hover:text-purple-700 p-1"
+                        title="JSON 보기"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </button>
                     {!template.is_default && (
                       <button
                         onClick={(e) => {
@@ -319,13 +363,13 @@ export default function NamecardTemplateManager({
                       className="text-gray-400 hover:text-red-600 p-1"
                       title="삭제"
                     >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
             ))}
           </div>
         )}

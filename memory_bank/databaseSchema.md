@@ -23,17 +23,81 @@
 | is_checked_in | boolean | NO | 체크인 상태 (기본값: false) |
 | checked_in_at | timestamp with time zone | YES | 체크인 시간 |
 | event_id | uuid | YES | 행사 ID (외래키) |
+| phone_number | text | YES | 전화번호 (동명이인 구분용) |
+| email | text | YES | 이메일 (동명이인 구분용) |
+
+### namecards 테이블 (명찰 템플릿)
+| 컬럼명 | 데이터 타입 | NULL 허용 | 설명 |
+|--------|-------------|-----------|------|
+| id | uuid | NO | 기본 키 (자동 생성) |
+| event_id | uuid | YES | 행사 ID (외래키) |
+| template_name | text | NO | 템플릿 이름 |
+| canvas_json | jsonb | NO | Fabric.js 캔버스 JSON |
+| created_at | timestamp with time zone | YES | 생성 시간 |
+| updated_at | timestamp with time zone | YES | 수정 시간 |
+| template_settings | jsonb | YES | 템플릿 설정 |
+| paper_width_cm | numeric | YES | 용지 너비 (기본값: 9.5cm) |
+| paper_height_cm | numeric | YES | 용지 높이 (기본값: 12.5cm) |
+| background_image_url | text | YES | 배경 이미지 URL |
+| print_areas | jsonb | YES | 인쇄 영역 설정 |
+| is_default | boolean | YES | 기본 템플릿 여부 (기본값: false) |
+| is_global | boolean | YES | 전역 템플릿 여부 (기본값: false) |
+
+### prize_draws 테이블 (경품추첨 세션)
+| 컬럼명 | 데이터 타입 | NULL 허용 | 설명 |
+|--------|-------------|-----------|------|
+| id | uuid | NO | 기본 키 (자동 생성) |
+| event_id | uuid | YES | 행사 ID (외래키) |
+| title | text | NO | 경품추첨 제목 |
+| description | text | YES | 경품추첨 설명 |
+| is_active | boolean | YES | 활성 상태 (기본값: true) |
+| created_at | timestamp with time zone | YES | 생성 시간 |
+| updated_at | timestamp with time zone | YES | 수정 시간 |
+
+### prizes 테이블 (경품 정보)
+| 컬럼명 | 데이터 타입 | NULL 허용 | 설명 |
+|--------|-------------|-----------|------|
+| id | uuid | NO | 기본 키 (자동 생성) |
+| prize_draw_id | uuid | YES | 경품추첨 ID (외래키) |
+| name | text | NO | 경품명 |
+| description | text | YES | 경품 설명 |
+| quantity | integer | NO | 수량 (기본값: 1) |
+| rank_order | integer | NO | 등수 순서 (1등, 2등, 3등) |
+| image_url | text | YES | 경품 이미지 URL |
+| created_at | timestamp with time zone | YES | 생성 시간 |
+
+### prize_winners 테이블 (추첨 결과)
+| 컬럼명 | 데이터 타입 | NULL 허용 | 설명 |
+|--------|-------------|-----------|------|
+| id | uuid | NO | 기본 키 (자동 생성) |
+| prize_draw_id | uuid | YES | 경품추첨 ID (외래키) |
+| prize_id | uuid | YES | 경품 ID (외래키) |
+| profile_id | uuid | YES | 참가자 ID (외래키) |
+| won_at | timestamp with time zone | YES | 당첨 시간 (기본값: now()) |
 
 ## 🔗 관계 설정
 
 ### 외래키 관계
 - `profiles.event_id` → `events.id`
-- CASCADE DELETE: 행사 삭제 시 관련 명단도 함께 삭제
+- `namecards.event_id` → `events.id`
+- `prize_draws.event_id` → `events.id`
+- `prizes.prize_draw_id` → `prize_draws.id`
+- `prize_winners.prize_draw_id` → `prize_draws.id`
+- `prize_winners.prize_id` → `prizes.id`
+- `prize_winners.profile_id` → `profiles.id`
+- CASCADE DELETE: 행사 삭제 시 관련 명단, 템플릿, 경품추첨도 함께 삭제
 
 ### 인덱스
 - `idx_profiles_event_id`: profiles.event_id 인덱스
 - `idx_events_event_date`: events.event_date 인덱스
 - `idx_profiles_checked_in`: profiles.is_checked_in 인덱스
+- `idx_namecards_event_id`: namecards.event_id 인덱스
+- `idx_namecards_is_global`: namecards.is_global 인덱스 (전역 템플릿 검색용)
+- `idx_profiles_phone_email`: profiles.phone_number, email 복합 인덱스 (동명이인 검색용)
+- `idx_prize_draws_event_id`: prize_draws.event_id 인덱스
+- `idx_prizes_prize_draw_id`: prizes.prize_draw_id 인덱스
+- `idx_prize_winners_prize_draw_id`: prize_winners.prize_draw_id 인덱스
+- `idx_prize_winners_profile_id`: prize_winners.profile_id 인덱스
 
 ## 🔒 보안 정책 (RLS)
 
@@ -72,6 +136,16 @@ WHERE p.event_id = $1
 ORDER BY p.created_at DESC;
 ```
 
+### 동명이인 검색 (전화번호/이메일 기반)
+```sql
+SELECT p.*, e.event_name, e.event_date
+FROM profiles p
+JOIN events e ON p.event_id = e.id
+WHERE p.event_id = $1 
+  AND (p.phone_number = $2 OR p.email = $3)
+ORDER BY p.created_at DESC;
+```
+
 ### 행사 통계 조회
 ```sql
 SELECT 
@@ -103,6 +177,21 @@ WHERE id = $1;
 - `createProfile(profileData)`: 명단 생성
 - `updateProfile(id, updates)`: 명단 수정
 - `updateCheckInStatus(id, isCheckedIn)`: 체크인 상태 업데이트
+- `searchProfilesByContact(eventId, phoneNumber, email)`: 전화번호/이메일로 동명이인 검색
+- `getTemplatesByEvent(eventId)`: 행사별 명찰 템플릿 조회
+- `createTemplate(templateData)`: 명찰 템플릿 생성
+- `updateTemplate(id, updates)`: 명찰 템플릿 수정
+- `getPrizeDrawsByEvent(eventId)`: 행사별 경품추첨 조회
+- `createPrizeDraw(eventId, data)`: 경품추첨 생성
+- `updatePrizeDraw(prizeDrawId, data)`: 경품추첨 수정
+- `deletePrizeDraw(prizeDrawId)`: 경품추첨 삭제
+- `getPrizesByPrizeDraw(prizeDrawId)`: 경품추첨별 경품 조회
+- `createPrize(prizeDrawId, data)`: 경품 생성
+- `updatePrize(prizeId, data)`: 경품 수정
+- `deletePrize(prizeId)`: 경품 삭제
+- `executePrizeDraw(prizeDrawId)`: 경품추첨 실행
+- `getPrizeWinners(prizeDrawId)`: 추첨 결과 조회
+- `resetPrizeDraw(prizeDrawId)`: 추첨 결과 초기화
 
 ## 📈 성능 최적화
 
@@ -117,6 +206,6 @@ WHERE id = $1;
 - 기본값 설정
 
 ---
-**업데이트일**: 2025년 1월 13일  
+**업데이트일**: 2025년 1월 27일  
 **데이터베이스**: Supabase PostgreSQL  
-**버전**: 1.0
+**버전**: 3.0 (경품추첨 기능 추가, 전역 템플릿 지원)

@@ -5,6 +5,7 @@ import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import JSZip from 'jszip'
 import { fabric } from 'fabric'
+import PrizeDrawPanel from './PrizeDrawPanel'
 
 export default function OutputPanel({ 
   canvasRef, 
@@ -12,7 +13,8 @@ export default function OutputPanel({
   profiles = [], 
   selectedProfiles = [],
   updateCanvasWithProfile,
-  selectionMode = 'individual' // 선택모드 추가
+  selectionMode = 'individual', // 선택모드 추가
+  eventId // 경품추첨용 eventId 추가
 }) {
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
@@ -758,6 +760,7 @@ export default function OutputPanel({
           <div>• 고품질 출력을 위해 "고품질" 또는 "최고 품질"을 선택하세요</div>
         </div>
       </div>
+
 
       {/* 안내 메시지 */}
       {!selectedProfile && (

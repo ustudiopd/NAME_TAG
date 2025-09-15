@@ -27,6 +27,13 @@ export default function ProfileList({
   // 스크롤 설정
   const scrollTimeoutRef = useRef(null)
 
+  // 전화번호 마스킹 함수
+  const maskPhoneNumber = (phone) => {
+    if (!phone) return null
+    // 010-1234-5678 -> 010-****-5678
+    return phone.replace(/(\d{3})-(\d{4})-(\d{4})/, '$1-****-$3')
+  }
+
   useEffect(() => {
     if (selectedEventId) {
       loadProfiles()
@@ -138,7 +145,9 @@ export default function ProfileList({
       filtered = profiles.filter(profile => 
         profile.name?.toLowerCase().includes(term) ||
         profile.company?.toLowerCase().includes(term) ||
-        profile.title?.toLowerCase().includes(term)
+        profile.title?.toLowerCase().includes(term) ||
+        profile.phone_number?.toLowerCase().includes(term) ||
+        profile.email?.toLowerCase().includes(term)
       )
     }
     
@@ -460,7 +469,7 @@ export default function ProfileList({
         <div className="relative">
           <input
             type="text"
-            placeholder="이름, 회사, 직급으로 검색..."
+            placeholder="이름, 회사, 직급, 전화번호, 이메일로 검색..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full px-3 py-2 pl-8 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -591,6 +600,20 @@ export default function ProfileList({
                       <p className="text-xs text-gray-500 truncate">
                         {profile.title}
                       </p>
+                    )}
+                    {(profile.phone_number || profile.email) && (
+                      <div className="flex items-center space-x-2 mt-1">
+                        {profile.phone_number && (
+                          <span className="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                            📞 {maskPhoneNumber(profile.phone_number)}
+                          </span>
+                        )}
+                        {profile.email && (
+                          <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
+                            ✉️ {profile.email}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="ml-2 flex-shrink-0">

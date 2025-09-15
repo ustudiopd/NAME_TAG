@@ -12,7 +12,9 @@ export default function ColumnMapping({
   const [mapping, setMapping] = useState({
     name: '',
     company: '',
-    title: ''
+    title: '',
+    phone_number: '',
+    email: ''
   })
 
   // 자동 매핑 시도
@@ -21,7 +23,9 @@ export default function ColumnMapping({
       const autoMapping = {
         name: findBestMatch(headers, ['이름', 'name', '성명', '성함']),
         company: findBestMatch(headers, ['회사명', 'company', '회사', '소속']),
-        title: findBestMatch(headers, ['직급', 'title', 'position', '직책', '부서'])
+        title: findBestMatch(headers, ['직급', 'title', 'position', '직책', '부서']),
+        phone_number: findBestMatch(headers, ['전화번호', 'phone', 'phone_number', '연락처', '휴대폰', '핸드폰']),
+        email: findBestMatch(headers, ['이메일', 'email', 'e-mail', '메일'])
       }
       setMapping(autoMapping)
     }
@@ -73,6 +77,8 @@ export default function ColumnMapping({
         name: name.toString().trim(),
         company: mapping.company ? (getValueByColumn(row, mapping.company)?.toString().trim() || null) : null,
         title: mapping.title ? (getValueByColumn(row, mapping.title)?.toString().trim() || null) : null,
+        phone_number: mapping.phone_number ? (getValueByColumn(row, mapping.phone_number)?.toString().trim() || null) : null,
+        email: mapping.email ? (getValueByColumn(row, mapping.email)?.toString().trim() || null) : null,
         is_checked_in: false,
         checked_in_at: null,
         event_id: eventId || null
@@ -154,6 +160,42 @@ export default function ColumnMapping({
             ))}
           </select>
         </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            전화번호
+          </label>
+          <select
+            value={mapping.phone_number}
+            onChange={(e) => handleMappingChange('phone_number', e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">컬럼을 선택하세요 (선택사항)</option>
+            {headers.map((header, index) => (
+              <option key={index} value={header}>
+                {header}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            이메일
+          </label>
+          <select
+            value={mapping.email}
+            onChange={(e) => handleMappingChange('email', e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">컬럼을 선택하세요 (선택사항)</option>
+            {headers.map((header, index) => (
+              <option key={index} value={header}>
+                {header}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* 미리보기 */}
@@ -166,6 +208,8 @@ export default function ColumnMapping({
                 <th className="px-3 py-2 text-left">이름</th>
                 {mapping.company && <th className="px-3 py-2 text-left">회사명</th>}
                 {mapping.title && <th className="px-3 py-2 text-left">직급</th>}
+                {mapping.phone_number && <th className="px-3 py-2 text-left">전화번호</th>}
+                {mapping.email && <th className="px-3 py-2 text-left">이메일</th>}
               </tr>
             </thead>
             <tbody>
@@ -184,6 +228,16 @@ export default function ColumnMapping({
                     {mapping.title && (
                       <td className="px-3 py-2">
                         {getValueByColumn(row, mapping.title) || '-'}
+                      </td>
+                    )}
+                    {mapping.phone_number && (
+                      <td className="px-3 py-2">
+                        {getValueByColumn(row, mapping.phone_number) || '-'}
+                      </td>
+                    )}
+                    {mapping.email && (
+                      <td className="px-3 py-2">
+                        {getValueByColumn(row, mapping.email) || '-'}
                       </td>
                     )}
                   </tr>

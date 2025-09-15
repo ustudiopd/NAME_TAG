@@ -10,6 +10,7 @@ import ExcelUpload from './ExcelUpload'
 import NamecardTemplateManager from './NamecardTemplateManager'
 import NamecardTemplateSettings from './NamecardTemplateSettings'
 import OutputPanel from './OutputPanel'
+import PrizeDrawPanel from './PrizeDrawPanel'
 
 // CanvasEditor를 dynamic import로 불러와서 SSR 완전 비활성화
 const CanvasEditor = dynamic(() => import('./CanvasEditor_new'), { 
@@ -41,6 +42,7 @@ export default function EventDetailView({
   const [currentTemplate, setCurrentTemplate] = useState(null)
   const [isTemplateCollapsed, setIsTemplateCollapsed] = useState(true)
   const [isOutputCollapsed, setIsOutputCollapsed] = useState(true)
+  const [isPrizeDrawCollapsed, setIsPrizeDrawCollapsed] = useState(true)
   const [selectionMode, setSelectionMode] = useState('individual') // 'individual' 또는 'batch'
   const [isClient, setIsClient] = useState(false) // 클라이언트 렌더링 상태
 
@@ -295,7 +297,38 @@ export default function EventDetailView({
                 selectedProfiles={Array.from(selectedProfiles)}
                 updateCanvasWithProfile={canvasRef?.updateCanvasWithProfile}
                 selectionMode={selectionMode}
+                eventId={event.id}
               />
+            </div>
+          )}
+        </div>
+
+        {/* 경품추첨 섹션 */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div 
+            className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+            onClick={() => setIsPrizeDrawCollapsed(!isPrizeDrawCollapsed)}
+          >
+            <div className="flex items-center space-x-3">
+              <button className="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg 
+                  className={`w-5 h-5 transition-transform ${isPrizeDrawCollapsed ? 'rotate-0' : 'rotate-180'}`}
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">경품추첨</h3>
+                <p className="text-sm text-gray-600 mt-1">경품추첨을 설정하고 실행하세요</p>
+              </div>
+            </div>
+          </div>
+          {!isPrizeDrawCollapsed && (
+            <div className="p-4">
+              <PrizeDrawPanel eventId={event.id} />
             </div>
           )}
         </div>
