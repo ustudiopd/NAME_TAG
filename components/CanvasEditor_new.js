@@ -7,6 +7,11 @@ import { getDefaultTemplate } from '../lib/namecardDatabase'
 import ImageUpload from './ImageUpload'
 import ImageUploadLibrary from './ImageUploadLibrary'
 import { uploadImage } from '../lib/storage'
+import { 
+  saveTextObjectSettings, 
+  getTextObjectSettings, 
+  getDefaultTextObjectSettings 
+} from '../lib/textObjectSettingsDatabase'
 
 // Fabric.js를 동적으로 import하여 SSR 문제 해결
 let fabric = null
@@ -71,6 +76,12 @@ export default function CanvasEditor({
     height: 12.5, // cm
     showGuidelines: true // 가이드라인 표시 여부
   })
+  
+  // 동일 프로필 재바인딩 차단을 위한 시그니처 ref
+  const lastProfileSigRef = useRef('')
+  
+  // 드래그 중인지 추적 (강제 선택 최소화)
+  const isDraggingRef = useRef(false)
 
   // 안전한 캔버스 렌더링 함수
   const safeRenderAll = (canvas) => {
@@ -317,8 +328,24 @@ export default function CanvasEditor({
     })
     canvas.add(sizeText)
 
-    // 기본 템플릿 생성
-    await createDefaultTemplate(canvas)
+    // 저장된 설정 불러오기
+    let savedSettings = null
+    if (eventId) {
+      const { data, error } = await getTextObjectSettings(eventId)
+      if (!error && data) {
+        savedSettings = data
+        console.log('Loaded saved text object settings:', savedSettings)
+      } else {
+        console.log('No saved settings found, using defaults')
+      }
+    }
+    
+    // 기본 템플릿 생성 (저장된 설정이 있으면 사용)
+    if (savedSettings) {
+      await createSingleTextObject(canvas, savedSettings)
+    } else {
+      await createDefaultTemplate(canvas)
+    }
 
     // 강제 렌더링 실행 (배포 환경 대응)
     canvas.renderAll()
@@ -349,7 +376,17 @@ export default function CanvasEditor({
 
     // 이벤트 리스너 등록
     canvas.on('object:moving', () => {
+      isDraggingRef.current = true // 드래그 시작
       if (onCanvasUpdate) onCanvasUpdate()
+    })
+    
+    canvas.on('object:modified', () => {
+      isDraggingRef.current = false // 드래그 종료
+      if (onCanvasUpdate) onCanvasUpdate()
+    })
+    
+    canvas.on('mouse:up', () => {
+      isDraggingRef.current = false // 마우스 업 시 드래그 종료
     })
 
 
@@ -490,42 +527,25 @@ export default function CanvasEditor({
   }, []) // 컴포넌트 마운트 시 한 번만 실행
 
   // 기본 템플릿 생성
-  const createDefaultTemplate = async (canvas) => {
-    console.log('Creating default template for canvas:', canvas.width, 'x', canvas.height)
+  // 단일 텍스트 객체 생성 (설정 기반)
+  const createSingleTextObject = async (canvas, settings = null) => {
+    console.log('Creating single text object for canvas:', canvas.width, 'x', canvas.height)
     
     if (!canvas) return
     
     // Fabric.js 로드 확인
     const fabricLib = await loadFabric()
     if (!fabricLib) {
-      console.error('Fabric.js not loaded for default template')
+      console.error('Fabric.js not loaded for text object')
       return
     }
     fabric = fabricLib // 전역 fabric 변수에 할당
     
-    // 캔버스 중앙 좌표
-    const centerX = canvas.width / 2  // 170
-    const centerY = canvas.height / 2 // 236
-    
-    // 회사명 텍스트
-    const companyText = new fabric.IText('회사명', {
-      left: centerX,
-      top: centerY - 80,
-      fontSize: 24,
-      fontFamily: 'Arial',
-      fill: '#000000',
-      textAlign: 'center',
-      originX: 'center',
-      originY: 'center',
-      zIndex: 1000
-    })
-    canvas.add(companyText)
-    console.log('Added company text at:', centerX, centerY - 80)
-
-    // 이름 텍스트
-    const nameText = new fabric.IText('이름', {
-      left: centerX,
-      top: centerY,
+    // 기본 설정 또는 저장된 설정 사용
+    const defaultSettings = {
+      textContent: '이름',
+      left: 170,
+      top: 236,
       fontSize: 32,
       fontFamily: 'Arial',
       fontWeight: 'bold',
@@ -533,31 +553,57 @@ export default function CanvasEditor({
       textAlign: 'center',
       originX: 'center',
       originY: 'center',
-      zIndex: 1000
+      angle: 0,
+      opacity: 1.0,
+      scaleX: 1.0,
+      scaleY: 1.0
+    }
+    
+    const finalSettings = settings || defaultSettings
+    
+    // 단일 텍스트 객체 생성
+    const textObject = new fabric.IText(finalSettings.textContent, {
+      left: finalSettings.left,
+      top: finalSettings.top,
+      fontSize: finalSettings.fontSize,
+      fontFamily: finalSettings.fontFamily,
+      fontWeight: finalSettings.fontWeight,
+      fill: finalSettings.fill,
+      textAlign: finalSettings.textAlign,
+      originX: finalSettings.originX,
+      originY: finalSettings.originY,
+      angle: finalSettings.angle,
+      opacity: finalSettings.opacity,
+      scaleX: finalSettings.scaleX,
+      scaleY: finalSettings.scaleY,
+      zIndex: 1000,
+      dataField: 'profileText' // 단일 객체 식별자
     })
-    canvas.add(nameText)
-    console.log('Added name text at:', centerX, centerY)
-
-    // 직급 텍스트
-    const titleText = new fabric.IText('직급', {
-      left: centerX,
-      top: centerY + 80,
-      fontSize: 20,
-      fontFamily: 'Arial',
-      fill: '#000000',
-      textAlign: 'center',
-      originX: 'center',
-      originY: 'center',
-      zIndex: 1000
-    })
-    canvas.add(titleText)
-    console.log('Added title text at:', centerX, centerY + 80)
-
+    
+    canvas.add(textObject)
+    console.log('Added single text object:', finalSettings.textContent, 'at', finalSettings.left, finalSettings.top)
+    
     safeRenderAll(canvas)
-    console.log('Default template created, total objects:', canvas.getObjects().length)
+    return textObject
   }
 
-  // 프로필 데이터로 캔버스 업데이트 (위치 유지하면서 텍스트만 변경)
+  // 기본 템플릿 생성 (단일 텍스트 객체)
+  const createDefaultTemplate = async (canvas) => {
+    console.log('Creating default template with single text object')
+    
+    // 기존 텍스트 객체 제거
+    const existingTextObjects = canvas.getObjects().filter(o => o.type === 'i-text')
+    existingTextObjects.forEach(obj => canvas.remove(obj))
+    
+    // 단일 텍스트 객체 생성
+    await createSingleTextObject(canvas)
+    
+    const totalObjects = canvas.getObjects().length
+    const textObjectsCount = canvas.getObjects().filter(o => o.type === 'i-text').length
+    console.log('Default template created, total objects:', totalObjects, 'text objects:', textObjectsCount)
+  }
+
+  // 프로필 데이터로 단일 텍스트 객체 업데이트
   const updateCanvasWithProfile = useCallback((profile) => {
     if (!fabricCanvasRef.current) return
 
@@ -569,81 +615,61 @@ export default function CanvasEditor({
       return
     }
 
-    const objects = canvas.getObjects()
-
     console.log('Updating canvas with profile:', profile)
-    console.log('Current objects count:', objects.length)
 
-    // 🔥 새로운 로직: 텍스트 객체들을 Y 좌표 순으로 정렬하여 순서대로 업데이트
-    const textObjects = objects
-      .filter(obj => obj.type === 'i-text')
-      .sort((a, b) => (a.top || 0) - (b.top || 0))
-
-    console.log('Text objects found:', textObjects.length)
-
-    // 텍스트 객체를 순서대로 업데이트 (위치 기반)
-    textObjects.forEach((obj, index) => {
-      const currentText = obj.text || ''
-      console.log(`Text object ${index}: "${currentText}" at position:`, obj.left, obj.top)
-      
-      // 첫 번째 텍스트 객체는 회사명으로 설정
-      if (index === 0) {
-        obj.set('text', profile.company || '회사명')
-        console.log('Updated first text to company:', profile.company)
-      }
-      // 두 번째 텍스트 객체는 이름으로 설정
-      else if (index === 1) {
-        obj.set('text', profile.name || '이름')
-        console.log('Updated second text to name:', profile.name)
-      }
-      // 세 번째 텍스트 객체는 직급으로 설정
-      else if (index === 2) {
-        obj.set('text', profile.title || '직급')
-        console.log('Updated third text to title:', profile.title)
-      }
-      // 기존 키워드 매칭 로직도 유지 (호환성)
-      else {
-        const lowerText = currentText.toLowerCase()
-        
-        if (currentText === '회사명' || currentText === 'Company' || 
-            currentText === '회사' || currentText === 'company') {
-          obj.set('text', profile.company || '회사명')
-          console.log('Updated company text to:', profile.company)
+    // 단일 텍스트 객체 찾기
+    let textObject = canvas.getObjects().find(o => 
+      o.type === 'i-text' && o.dataField === 'profileText'
+    )
+    
+    // 텍스트 객체가 없으면 생성
+    if (!textObject) {
+      console.log('Text object not found, creating new one')
+      createSingleTextObject(canvas).then(obj => {
+        if (obj) {
+          updateTextObjectWithProfile(obj, profile, canvas)
         }
-        else if (currentText === '이름' || currentText === 'Name' || 
-                 currentText === '성명' || currentText === 'fullname') {
-          obj.set('text', profile.name || '이름')
-          console.log('Updated name text to:', profile.name)
-        }
-        else if (currentText === '직급' || currentText === 'Title' || 
-                 currentText === 'Position' || currentText === '부서') {
-          obj.set('text', profile.title || '직급')
-          console.log('Updated title text to:', profile.title)
-        }
-      }
-    })
-
-    // 안전한 렌더링 (배포 환경 대응)
-    if (safeRenderAll(canvas)) {
-      console.log('Canvas updated with profile data')
+      })
+      return
     }
     
-    // 배포 환경에서 안정적인 렌더링을 위한 추가 렌더링
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after profile update (1st)')
-    }, 50)
+    // 텍스트 객체에 프로필 데이터 담기
+    updateTextObjectWithProfile(textObject, profile, canvas)
+  }, [fabricCanvasRef, onPropertyChange])
+  
+  // 텍스트 객체에 프로필 데이터 업데이트
+  const updateTextObjectWithProfile = (textObject, profile, canvas) => {
+    if (!textObject || !profile) return
     
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after profile update (2nd)')
-    }, 200)
+    // 프로필 정보를 하나의 텍스트로 조합 (회사명 - 이름 - 직급)
+    const parts = []
+    if (profile.company) parts.push(profile.company)
+    if (profile.name) parts.push(profile.name)
+    if (profile.title) parts.push(profile.title)
     
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after profile update (3rd)')
-    }, 500)
-  }, [fabricCanvasRef, safeRenderAll])
+    const profileText = parts.length > 0 ? parts.join(' - ') : '이름'
+    
+    // 텍스트 업데이트
+    textObject.set('text', profileText)
+    console.log('✅ Updated text object to:', profileText)
+    
+    // 드래그 중이 아닐 때만 자동 선택
+    if (onPropertyChange && !isDraggingRef.current) {
+      setTimeout(() => {
+        if (isDraggingRef.current) {
+          console.log('Skipping auto-select: user is dragging')
+          return
+        }
+        
+        canvas.setActiveObject(textObject)
+        canvas.renderAll()
+        onPropertyChange('selectedObject', textObject)
+        console.log('Text object selected for position adjustment:', textObject.text)
+      }, 150)
+    }
+    
+    safeRenderAll(canvas)
+  }
 
   // 기본 템플릿으로 캔버스 초기화 (프로필 없이)
   const initializeCanvasWithDefaultTemplate = useCallback(async () => {
@@ -744,7 +770,8 @@ export default function CanvasEditor({
     if (!fabricCanvasRef.current) return null
     
     const canvas = fabricCanvasRef.current
-    const data = canvas.toJSON()
+    // 커스텀 속성(dataField) 포함하여 저장
+    const data = canvas.toJSON(['dataField'])
     console.log('Canvas JSON:', data)
     return data
   }
@@ -755,8 +782,8 @@ export default function CanvasEditor({
     
     const canvas = fabricCanvasRef.current
     
-    // 캔버스 JSON을 그대로 반환 (모든 정보가 이미 포함되어 있음)
-    const canvasJson = canvas.toJSON()
+    // 캔버스 JSON을 그대로 반환 (커스텀 속성 포함)
+    const canvasJson = canvas.toJSON(['dataField'])
     console.log('Canvas JSON:', canvasJson)
     
     return canvasJson
@@ -950,7 +977,8 @@ export default function CanvasEditor({
             lockScalingX: true,
             lockScalingY: true,
             lockUniScaling: true,
-            zIndex: 1000  // 배경 이미지보다 앞에 오도록 설정
+            zIndex: 1000,  // 배경 이미지보다 앞에 오도록 설정
+            dataField: objData.dataField // 커스텀 필드 복원 (구버전 템플릿 호환)
           })
           textObj.setCoords()
           canvas.add(textObj)
@@ -1382,9 +1410,12 @@ export default function CanvasEditor({
     }
   }
 
-  // selectedProfile 변경 시 캔버스 업데이트
+  // selectedProfile 변경 시 캔버스 업데이트 (동일 프로필 재바인딩 차단)
   useEffect(() => {
-    if (!fabricCanvasRef.current || !isCanvasReady) return
+    if (!fabricCanvasRef.current || !isCanvasReady) {
+      console.log('CanvasEditor: Canvas not ready yet')
+      return
+    }
 
     // 템플릿 로딩 중이면 프로필 업데이트 건너뛰기
     if (isLoading) {
@@ -1392,20 +1423,96 @@ export default function CanvasEditor({
       return
     }
 
-    if (selectedProfile) {
-      // 프로필이 선택된 경우 해당 프로필로 업데이트
-      console.log('CanvasEditor: Updating canvas with profile:', selectedProfile.name)
-      updateCanvasWithProfile(selectedProfile)
-    } else {
-      // 프로필이 선택되지 않은 경우 기본 템플릿으로 초기화하지 않음 (로드된 템플릿 유지)
-      console.log('CanvasEditor: No profile selected, but keeping current canvas content')
+    // 캔버스에 텍스트 객체가 있는지 확인
+    const canvas = fabricCanvasRef.current
+    const textObjects = canvas.getObjects().filter(o => o.type === 'i-text')
+    if (textObjects.length === 0) {
+      console.warn('CanvasEditor: No text objects found, cannot update profile. Template may not be initialized yet.')
+      return
     }
-  }, [selectedProfile, isCanvasReady, updateCanvasWithProfile, initializeCanvasWithDefaultTemplate, isLoading])
+    
+    // dataField가 설정된 텍스트 객체가 있는지 확인
+    const objectsWithDataField = textObjects.filter(o => o.dataField)
+    if (objectsWithDataField.length === 0 && textObjects.length > 0) {
+      console.warn('CanvasEditor: Text objects found but no dataField set. This may be an old template.')
+      // 구버전 템플릿이므로 fallback 매칭으로 처리됨
+    }
+
+    if (!selectedProfile) {
+      console.log('CanvasEditor: No profile selected, keeping current canvas content')
+      lastProfileSigRef.current = '' // 프로필 해제 시 시그니처 초기화
+      return
+    }
+
+    // 프로필 시그니처 생성 (동일 프로필 재바인딩 차단)
+    const sig = [
+      selectedProfile.id ?? '',
+      selectedProfile.name ?? '',
+      selectedProfile.company ?? '',
+      selectedProfile.title ?? ''
+    ].join('|')
+
+    // 동일 프로필이면 재바인딩 스킵
+    if (lastProfileSigRef.current === sig) {
+      console.log('CanvasEditor: Profile unchanged; skip rebinding')
+      return
+    }
+
+    // 프로필이 실제로 변경된 경우에만 업데이트
+    console.log('CanvasEditor: Updating canvas with profile:', selectedProfile.name)
+    console.log('CanvasEditor: Text objects available:', textObjects.length)
+    updateCanvasWithProfile(selectedProfile)
+    lastProfileSigRef.current = sig
+  }, [selectedProfile, isCanvasReady, updateCanvasWithProfile, isLoading])
 
   // 외부에서 템플릿 로드 호출 가능하도록 노출 (캔버스 준비 후)
   useEffect(() => {
     if (onTemplateLoad && fabricCanvasRef.current && isCanvasReady) {
       console.log('CanvasEditor: Exposing canvas methods to parent')
+      
+      // 현재 텍스트 객체 설정 저장
+      const saveCurrentSettings = async () => {
+        if (!eventId || !fabricCanvasRef.current) {
+          console.warn('Cannot save settings: eventId or canvas not available')
+          return { success: false, error: 'Event ID or canvas not available' }
+        }
+        
+        const canvas = fabricCanvasRef.current
+        const textObject = canvas.getObjects().find(o => 
+          o.type === 'i-text' && o.dataField === 'profileText'
+        )
+        
+        if (!textObject) {
+          console.warn('No text object found to save')
+          return { success: false, error: 'No text object found' }
+        }
+        
+        const settings = {
+          textContent: textObject.text || '',
+          left: textObject.left || 170,
+          top: textObject.top || 236,
+          fontSize: textObject.fontSize || 32,
+          fontFamily: textObject.fontFamily || 'Arial',
+          fontWeight: textObject.fontWeight || 'bold',
+          fill: textObject.fill || '#000000',
+          textAlign: textObject.textAlign || 'center',
+          originX: textObject.originX || 'center',
+          originY: textObject.originY || 'center',
+          angle: textObject.angle || 0,
+          opacity: textObject.opacity || 1.0,
+          scaleX: textObject.scaleX || 1.0,
+          scaleY: textObject.scaleY || 1.0
+        }
+        
+        const { data, error } = await saveTextObjectSettings(eventId, settings)
+        if (error) {
+          console.error('Failed to save settings:', error)
+          return { success: false, error }
+        }
+        
+        console.log('Settings saved successfully:', data)
+        return { success: true, data }
+      }
       
       const canvasMethods = {
         loadTemplate,
@@ -1413,6 +1520,7 @@ export default function CanvasEditor({
         updateCanvasWithProfile,
         initializeCanvasWithDefaultTemplate,
         getCurrentCanvasJson,
+        saveCurrentSettings,
         bringToFront: () => {
           const canvas = fabricCanvasRef.current
           const activeObject = canvas.getActiveObject()

@@ -90,25 +90,8 @@ export default function EventDetailView({
     }
   }
 
-  // 선택된 프로필이 변경될 때 캔버스 업데이트
-  useEffect(() => {
-    console.log('EventDetailView: Profile change detected:', {
-      selectedProfile: selectedProfile?.name || 'null',
-      hasCanvasRef: !!canvasRef,
-      hasUpdateMethod: !!(canvasRef && canvasRef.updateCanvasWithProfile)
-    })
-    
-    if (selectedProfile && canvasRef && canvasRef.updateCanvasWithProfile) {
-      console.log('EventDetailView: Calling updateCanvasWithProfile with:', selectedProfile.name)
-      canvasRef.updateCanvasWithProfile(selectedProfile)
-    } else if (!selectedProfile) {
-      console.log('EventDetailView: No profile selected, skipping canvas update')
-    } else if (!canvasRef) {
-      console.log('EventDetailView: Canvas not ready yet, skipping canvas update')
-    } else {
-      console.log('EventDetailView: Canvas missing updateCanvasWithProfile method')
-    }
-  }, [selectedProfile, canvasRef])
+  // 선택된 프로필이 변경될 때는 CanvasEditor 내부에서 처리하므로 여기서는 제거
+  // 중복 호출 방지를 위해 EventDetailView에서는 처리하지 않음
 
   const handleTemplateSelect = (template) => {
     console.log('EventDetailView handleTemplateSelect called:', template)
@@ -356,14 +339,36 @@ export default function EventDetailView({
         <div className="lg:col-span-5">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full flex flex-col">
             <div className="p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">명찰 편집</h3>
-              {selectedProfile ? (
-                <p className="text-sm text-gray-600 mt-1 truncate">
-                  {selectedProfile.name} - {selectedProfile.company} - {selectedProfile.title}
-                </p>
-              ) : (
-                <p className="text-sm text-gray-500 mt-1">명단을 선택하세요</p>
-              )}
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">명찰 편집</h3>
+                  {selectedProfile ? (
+                    <p className="text-sm text-gray-600 mt-1 truncate">
+                      {selectedProfile.name} - {selectedProfile.company} - {selectedProfile.title}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-500 mt-1">명단을 선택하세요</p>
+                  )}
+                </div>
+                <button
+                  onClick={async () => {
+                    if (canvasRef && canvasRef.saveCurrentSettings) {
+                      const result = await canvasRef.saveCurrentSettings()
+                      if (result.success) {
+                        alert('설정이 저장되었습니다.')
+                      } else {
+                        alert('설정 저장에 실패했습니다: ' + (result.error?.message || '알 수 없는 오류'))
+                      }
+                    } else {
+                      alert('캔버스가 아직 준비되지 않았습니다.')
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors font-medium"
+                  title="현재 텍스트 객체 설정 저장"
+                >
+                  설정 저장
+                </button>
+              </div>
             </div>
             <div className="flex-1 p-4 min-h-[600px]">
               {selectionMode === 'individual' ? (

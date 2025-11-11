@@ -274,7 +274,13 @@ export default function ProfileList({
     }
   }
 
-  const handleProfileClick = (profile) => {
+  const handleProfileClick = (profile, e) => {
+    // 이벤트 전파 방지 (이름 편집 등 다른 클릭 이벤트와 충돌 방지)
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    
     // 편집 중이면 편집 취소
     if (editingProfile) {
       handleEditCancel()
@@ -521,7 +527,7 @@ export default function ProfileList({
                     ? 'bg-blue-25 border-blue-100 shadow-sm'
                     : 'bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300'
                 }`}
-                onClick={() => handleProfileClick(profile)}
+                onClick={(e) => handleProfileClick(profile, e)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">

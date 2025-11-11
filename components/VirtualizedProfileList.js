@@ -147,7 +147,13 @@ export default function VirtualizedProfileList({
   }
 
   // 프로필 클릭 핸들러
-  const handleProfileClick = (profile) => {
+  const handleProfileClick = (profile, e) => {
+    // 이벤트 전파 방지 (이름 편집 등 다른 클릭 이벤트와 충돌 방지)
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    
     if (selectionMode === 'individual') {
       onProfileSelect(profile)
     }
@@ -334,7 +340,7 @@ export default function VirtualizedProfileList({
                         ? 'bg-blue-25 border-blue-100'
                         : 'bg-white hover:bg-gray-50'
                     }`}
-                    onClick={() => handleProfileClick(profile)}
+                    onClick={(e) => handleProfileClick(profile, e)}
                   >
                     <div className="flex items-center justify-between h-full">
                       <div className="flex-1 min-w-0">

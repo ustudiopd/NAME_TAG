@@ -119,6 +119,37 @@ const handlePropertyChange = (property, value) => {
     onPropertyChange(property, value)
   }
 }
+
+// 명단 클릭 이벤트 처리 (이벤트 전파 방지)
+const handleProfileClick = (profile, e) => {
+  // 이벤트 전파 방지 (이름 편집 등 다른 클릭 이벤트와 충돌 방지)
+  if (e) {
+    e.stopPropagation()
+    e.preventDefault()
+  }
+  
+  // 프로필 선택 처리
+  if (selectionMode === 'individual') {
+    onProfileSelect(profile)
+  }
+}
+
+// 프로필 업데이트 후 자동 객체 선택
+const updateCanvasWithProfile = useCallback((profile) => {
+  // 텍스트 객체 업데이트
+  textObjects.forEach((obj, index) => {
+    // 텍스트 업데이트 로직
+  })
+  
+  // 이름 텍스트 객체 자동 선택
+  if (nameTextObject && onPropertyChange) {
+    setTimeout(() => {
+      canvas.setActiveObject(nameTextObject)
+      canvas.renderAll()
+      onPropertyChange('selectedObject', nameTextObject)
+    }, 150)
+  }
+}, [fabricCanvasRef, safeRenderAll, onPropertyChange])
 ```
 
 ### 드래그 앤 드롭 (Legacy PyQt5)
@@ -353,6 +384,6 @@ const renderPropertySection = (objectType, properties) => {
 
 ---
 **작성일**: 2025년 9월 13일  
-**업데이트**: 2025년 1월 27일 오후 4:00  
-**버전**: 2.0 (Next.js 웹 애플리케이션)  
+**업데이트**: 2025년 11월 12일 오전  
+**버전**: 2.2 (명단 클릭 이벤트 개선 및 프로필 기반 위치 조정)  
 **프로젝트**: 명찰 출력 프로그램
