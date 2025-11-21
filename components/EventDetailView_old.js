@@ -1,21 +1,27 @@
-/**
- * EventDetailView (새 버전)
- * useNamecardEditor 훅을 사용하여 새 아키텍처로 통합
- */
-
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useNamecardEditor } from '../hooks/useNamecardEditor'
+import { useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
+import { getProfilesByEvent } from '../lib/database'
 import ProfileList from './ProfileList'
-import PropertyPanel from './PropertyPanel_new'
-import CanvasViewport from './CanvasViewport'
+import PropertyPanel from './PropertyPanel'
 import ProfileForm from './ProfileForm'
 import ExcelUpload from './ExcelUpload'
 import NamecardTemplateManager from './NamecardTemplateManager'
 import NamecardTemplateSettings from './NamecardTemplateSettings'
 import OutputPanel from './OutputPanel'
 import PrizeDrawPanel from './PrizeDrawPanel'
+
+// CanvasEditor를 dynamic import로 불러와서 SSR 완전 비활성화
+const CanvasEditor = dynamic(() => import('./CanvasEditor_new'), { 
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg">
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+      <div className="text-sm text-gray-600">캔버스 로딩 중...</div>
+    </div>
+  </div>
+})
 
 export default function EventDetailView({ 
   event, 
@@ -24,50 +30,36 @@ export default function EventDetailView({
   onEventChange, 
   refreshTrigger 
 }) {
-  // 새 에디터 훅 사용
-  const editor = useNamecardEditor(event?.id, {
-    paperWidthCm: 9.0,
-    paperHeightCm: 12.5,
-    showGuidelines: true
-  })
-
   const [showProfileForm, setShowProfileForm] = useState(false)
   const [showExcelUpload, setShowExcelUpload] = useState(false)
+  const [selectedObject, setSelectedObject] = useState(null)
+  const [currentCanvasJson, setCurrentCanvasJson] = useState(null)
+  const [canvasRef, setCanvasRef] = useState(null)
+  const [canvasMethods, setCanvasMethods] = useState(null)
   const [profiles, setProfiles] = useState([])
-  const [selectedProfiles, setSelectedProfiles] = useState(new Set())
-  const [showTemplateSettings, setShowTemplateSettings] = useState(false)
-  const [currentTemplate, setCurrentTemplate] = useState(null)
-  const [isTemplateCollapsed, setIsTemplateCollapsed] = useState(true)
-  const [isOutputCollapsed, setIsOutputCollapsed] = useState(true)
-  const [isPrizeDrawCollapsed, setIsPrizeDrawCollapsed] = useState(true)
-  const [selectionMode, setSelectionMode] = useState('individual')
-  const [isClient, setIsClient] = useState(false)
-
-  // 프로필이 로드되고 선택된 프로필이 없으면 첫 번째 프로필 자동 선택
+  
+  // 🔹 프로필이 로드되고 선택된 프로필이 없으면 첫 번째 프로필 자동 선택
   useEffect(() => {
     if (profiles.length > 0 && !selectedProfile && onProfileSelect) {
       console.log('🔹 첫 번째 프로필 자동 선택:', profiles[0].name)
       onProfileSelect(profiles[0])
     }
   }, [profiles, selectedProfile, onProfileSelect])
-
-  // 선택된 프로필이 변경될 때 에디터에 바인딩
-  // editor?.commands는 의존성에서 제거 (무한 루프 방지)
-  useEffect(() => {
-    if (editor?.commands && selectedProfile) {
-      editor.commands.bindProfile(selectedProfile)
-    }
-  }, [selectedProfile?.id]) // editor?.commands 제거로 무한 루프 해결
-
-  // 클라이언트 렌더링 완료 확인
-  useEffect(() => {
-    setIsClient(true)
-  }, [])
+  const [selectedProfiles, setSelectedProfiles] = useState(new Set())
+  const [showTemplateSettings, setShowTemplateSettings] = useState(false)
+  const [currentTemplate, setCurrentTemplate] = useState(null)
+  const [isTemplateCollapsed, setIsTemplateCollapsed] = useState(true)
+  const [isOutputCollapsed, setIsOutputCollapsed] = useState(true)
+  const [isPrizeDrawCollapsed, setIsPrizeDrawCollapsed] = useState(true)
+  const [selectionMode, setSelectionMode] = useState('individual') // 'individual' 또는 'batch'
+  const [isClient, setIsClient] = useState(false) // 클라이언트 렌더링 상태
 
   // 선택모드 변경 핸들러
   const handleSelectionModeChange = (newMode) => {
     setSelectionMode(newMode)
+    // 선택모드 변경 시 선택된 프로필들 초기화
     setSelectedProfiles(new Set())
+    // 개별 선택 모드로 변경 시 선택된 프로필도 초기화
     if (newMode === 'individual') {
       onProfileSelect(null)
     }
@@ -83,31 +75,100 @@ export default function EventDetailView({
     setShowExcelUpload(false)
   }
 
-  // 템플릿 선택 핸들러
-  const handleTemplateSelect = (template) => {
-    if (editor?.commands && template?.canvas_json) {
-      // 템플릿을 캔버스에 로드
-      editor.commands.loadTemplate(template.id)
+  // 클라이언트 렌더링 완료 확인
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
+
+
+  const handleCanvasUpdate = (updateData) => {
+    // 디버깅 로그는 선택적으로만 출력 (드래그 중 과도한 로그 방지)
+    if (updateData?.type === 'selection' || updateData?.type === 'layerChanged') {
+      console.log('Canvas updated:', updateData)
+    }
+    // modification 타입은 드래그 중에 너무 많이 발생하므로 로그 생략
+    
+    // 캔버스 업데이트 로직
+    if (updateData && updateData.type === 'modification') {
+      // 캔버스가 수정될 때마다 JSON 업데이트
+      if (canvasRef && canvasRef.getCurrentCanvasJson) {
+        const json = canvasRef.getCurrentCanvasJson()
+        setCurrentCanvasJson(json)
+      }
+    } else if (updateData?.type === 'layerChanged') {
+      // 레이어 순서 변경 시 선택된 객체 유지
+      console.log('Layer changed:', updateData.object)
+      setSelectedObject(updateData.object)
     }
   }
 
-  // 템플릿 저장 핸들러
+  // 프로필 주입은 CanvasEditor 내부 useEffect에서 단일 경로로 처리합니다.
+  // 중복 호출 방지를 위해 부모에서는 호출하지 않습니다.
+
+  const handleTemplateSelect = (template) => {
+    console.log('EventDetailView handleTemplateSelect called:', template)
+    console.log('CanvasRef:', canvasRef)
+    
+    if (canvasRef && canvasRef.loadTemplate) {
+      console.log('Calling loadTemplate...')
+      canvasRef.loadTemplate(template)
+    } else {
+      console.error('CanvasRef or loadTemplate not available, retrying in 100ms...')
+      // 캔버스가 아직 준비되지 않았을 수 있으므로 잠시 후 재시도
+      setTimeout(() => {
+        if (canvasRef && canvasRef.loadTemplate) {
+          console.log('Retry: Calling loadTemplate...')
+          canvasRef.loadTemplate(template)
+        } else {
+          console.error('CanvasRef still not available after retry')
+        }
+      }, 100)
+    }
+  }
+
   const handleTemplateSave = (template) => {
     console.log('Template saved:', template)
+    // 템플릿 저장 후 현재 캔버스 JSON 업데이트
+    if (canvasRef && canvasRef.getCurrentCanvasJson) {
+      const json = canvasRef.getCurrentCanvasJson()
+      setCurrentCanvasJson(json)
+    }
   }
+
+  const handleCanvasRef = useCallback((canvasInstance) => {
+    // canvasInstance가 유효한지 확인
+    if (!canvasInstance) {
+      console.log('EventDetailView: Invalid canvas instance received')
+      return
+    }
+    
+    // 이미 같은 인스턴스인지 확인하여 무한 루프 방지
+    if (canvasRef && canvasRef.fabricCanvasRef === canvasInstance.fabricCanvasRef) {
+      console.log('EventDetailView: Same canvas instance, skipping update')
+      return
+    }
+    
+    console.log('EventDetailView: Setting new canvas instance:', canvasInstance)
+    console.log('Canvas methods available:', canvasInstance?.loadTemplate ? 'Yes' : 'No')
+    setCanvasRef(canvasInstance)
+    setCanvasMethods(canvasInstance)
+  }, [canvasRef])
 
   // 현재 캔버스 JSON 가져오기
   const getCurrentCanvasJson = () => {
-    if (editor?.commands) {
-      return editor.commands.exportJson()
+    if (canvasRef && canvasRef.getCurrentCanvasJson) {
+      return canvasRef.getCurrentCanvasJson()
     }
     return null
   }
 
-  // 배경 이미지 업로드 핸들러
-  const handleBackgroundImage = () => {
-    // TODO: 이미지 업로드 UI 구현
-    console.log('Background image upload')
+  const handlePropertyChange = (property, value) => {
+    if (property === 'selectedObject') {
+      setSelectedObject(value)
+    } else if (selectedObject) {
+      selectedObject.set(property, value)
+      selectedObject.canvas?.renderAll()
+    }
   }
 
   return (
@@ -143,7 +204,7 @@ export default function EventDetailView({
         </div>
       </div>
 
-      {/* 템플릿 관리 + 출력 패널 */}
+      {/* 템플릿 관리 + 출력 패널 - 세로 배치 */}
       <div className="mb-4 space-y-4">
         {/* 템플릿 관리 */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
@@ -153,6 +214,7 @@ export default function EventDetailView({
                 <button
                   onClick={() => setIsTemplateCollapsed(!isTemplateCollapsed)}
                   className="p-1 hover:bg-gray-200 rounded transition-colors"
+                  title={isTemplateCollapsed ? '펼치기' : '접기'}
                 >
                   <svg 
                     className={`w-4 h-4 text-gray-600 transition-transform ${isTemplateCollapsed ? 'rotate-180' : ''}`}
@@ -184,12 +246,12 @@ export default function EventDetailView({
                   currentTemplate={currentTemplate}
                 />
               ) : (
-                <NamecardTemplateManager
-                  eventId={event.id}
-                  onTemplateSelect={handleTemplateSelect}
-                  onTemplateSave={handleTemplateSave}
-                  currentCanvasJson={getCurrentCanvasJson()}
-                />
+              <NamecardTemplateManager
+                eventId={event.id}
+                onTemplateSelect={handleTemplateSelect}
+                onTemplateSave={handleTemplateSave}
+                currentCanvasJson={getCurrentCanvasJson()}
+              />
               )}
             </div>
           )}
@@ -203,6 +265,7 @@ export default function EventDetailView({
                 <button
                   onClick={() => setIsOutputCollapsed(!isOutputCollapsed)}
                   className="p-1 hover:bg-gray-200 rounded transition-colors"
+                  title={isOutputCollapsed ? '펼치기' : '접기'}
                 >
                   <svg 
                     className={`w-4 h-4 text-gray-600 transition-transform ${isOutputCollapsed ? 'rotate-180' : ''}`}
@@ -223,11 +286,11 @@ export default function EventDetailView({
           {!isOutputCollapsed && (
             <div className="p-4">
               <OutputPanel
-                canvasRef={editor?.state?.canvasReady ? editor?.commands?.getCanvas() : null}
+                canvasRef={canvasRef?.fabricCanvasRef || canvasRef}
                 selectedProfile={selectedProfile}
                 profiles={profiles}
                 selectedProfiles={Array.from(selectedProfiles)}
-                updateCanvasWithProfile={editor?.commands?.bindProfile}
+                updateCanvasWithProfile={canvasRef?.updateCanvasWithProfile}
                 selectionMode={selectionMode}
                 eventId={event.id}
               />
@@ -266,9 +329,9 @@ export default function EventDetailView({
         </div>
       </div>
 
-      {/* 3단 수평 레이아웃 */}
+      {/* 3단 수평 레이아웃 - 명단(30% 축소), 캔버스(50% 확대), 속성(20% 유지) */}
       <div className="grid grid-cols-1 lg:grid-cols-10 gap-4 h-[calc(100vh-320px)]">
-        {/* 왼쪽: 명단 목록 */}
+        {/* 왼쪽: 명단 목록 (30% 축소) */}
         <div className="lg:col-span-3">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full">
             <ProfileList
@@ -284,7 +347,7 @@ export default function EventDetailView({
           </div>
         </div>
 
-        {/* 가운데: 캔버스 편집 */}
+        {/* 가운데: 캔버스 편집 (50% 확대) */}
         <div className="lg:col-span-5">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full flex flex-col">
             <div className="p-4 border-b border-gray-200">
@@ -299,10 +362,14 @@ export default function EventDetailView({
             </div>
             <div className="flex-1 p-4 min-h-[600px]">
               {selectionMode === 'individual' ? (
-                isClient && editor ? (
-                  <CanvasViewport 
-                    editor={editor}
-                    onBackgroundImage={handleBackgroundImage}
+                isClient ? (
+                  <CanvasEditor
+                    selectedProfile={selectedProfile}
+                    onCanvasUpdate={handleCanvasUpdate}
+                    selectedObject={selectedObject}
+                    onPropertyChange={handlePropertyChange}
+                    eventId={event.id}
+                    onTemplateLoad={handleCanvasRef}
                   />
                 ) : (
                   <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg">
@@ -318,6 +385,9 @@ export default function EventDetailView({
                     <div className="text-4xl mb-4">👥</div>
                     <div className="text-lg font-medium mb-2">일괄 선택 모드</div>
                     <div className="text-sm">명단에서 출력할 사람들을 선택해주세요</div>
+                    <div className="text-xs text-gray-400 mt-2">
+                      선택된 사람들은 일괄 출력 패널에서 출력할 수 있습니다
+                    </div>
                   </div>
                 </div>
               )}
@@ -325,20 +395,21 @@ export default function EventDetailView({
           </div>
         </div>
 
-        {/* 오른쪽: 속성 패널 */}
+        {/* 오른쪽: 속성 패널 (20% 유지) */}
         <div className="lg:col-span-2">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full">
             <div className="p-4 border-b border-gray-200 bg-gray-50">
               <h3 className="text-lg font-semibold text-gray-900">속성</h3>
               <p className="text-sm text-gray-600 mt-1">
-                {editor?.state?.selectedObjectProps ? '객체 속성을 조절하세요' : '객체를 선택하세요'}
+                {selectedObject ? '객체 속성을 조절하세요' : '객체를 선택하세요'}
               </p>
             </div>
             <div className="p-4 h-[calc(100%-80px)] overflow-y-auto">
               <PropertyPanel 
-                selectedObjectProps={editor?.state?.selectedObjectProps}
-                onChange={editor?.commands?.updateSelectedObject}
-                onAlign={editor?.commands?.alignSelected}
+                selectedObject={selectedObject} 
+                onPropertyChange={handlePropertyChange}
+                canvasRef={canvasRef?.fabricCanvasRef || canvasRef}
+                canvasMethods={canvasMethods}
               />
             </div>
           </div>
@@ -361,6 +432,7 @@ export default function EventDetailView({
           eventId={event.id}
         />
       )}
+
     </div>
   )
 }

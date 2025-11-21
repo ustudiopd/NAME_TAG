@@ -2,21 +2,20 @@
 
 import { useState, useEffect } from 'react'
 import { 
-  getNamecardTemplates, 
-  getNamecardTemplateById,
-  saveNamecardTemplate, 
-  deleteNamecardTemplate,
+  getAllTemplates,
+  getTemplateById,
+  saveTemplate,
+  deleteTemplate,
   setDefaultTemplate,
-  duplicateNamecardTemplate,
-  testSupabaseConnection,
-  migrateTemplatesToGlobal
-} from '../lib/namecardDatabase'
+  duplicateTemplate
+} from '../lib/repositories/TemplateRepository'
 
 export default function NamecardTemplateManager({ 
   eventId, 
   onTemplateSelect, 
   onTemplateSave,
-  currentCanvasJson 
+  currentCanvasJson,
+  getCurrentCanvasJson 
 }) {
   const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
@@ -33,27 +32,30 @@ export default function NamecardTemplateManager({
   const loadTemplates = async () => {
     try {
       setLoading(true)
-      // eventId는 무시하고 모든 전역 템플릿을 로드
-      const { data, error } = await getNamecardTemplates(null)
-      if (error) throw error
-      setTemplates(data || [])
-      console.log('Loaded global templates:', data?.length || 0)
+      // 모든 전역 템플릿을 로드
+      const templates = await getAllTemplates()
+      setTemplates(templates || [])
+      console.log('Loaded global templates:', templates?.length || 0)
     } catch (err) {
       console.error('Error loading templates:', err)
+      alert('템플릿 목록을 불러오는 중 오류가 발생했습니다.')
     } finally {
       setLoading(false)
     }
   }
 
   const handleSaveTemplate = async () => {
-    console.log('Saving global template:', { templateName, currentCanvasJson, eventId })
+    // 저장 시점에 최신 캔버스 JSON 가져오기
+    const canvasJson = getCurrentCanvasJson ? getCurrentCanvasJson() : currentCanvasJson
+    
+    console.log('Saving global template:', { templateName, canvasJson })
     
     if (!templateName.trim()) {
       alert('템플릿 이름을 입력해주세요.')
       return
     }
     
-    if (!currentCanvasJson) {
+    if (!canvasJson) {
       alert('저장할 캔버스 데이터가 없습니다. 명찰을 편집한 후 다시 시도해주세요.')
       return
     }
@@ -61,23 +63,21 @@ export default function NamecardTemplateManager({
     try {
       setSaving(true)
       
-      // 먼저 Supabase 연결 테스트
-      const connectionTest = await testSupabaseConnection()
-      if (!connectionTest.success) {
-        throw new Error(`데이터베이스 연결 실패: ${connectionTest.error?.message}`)
-      }
+      // TemplateRepository를 사용하여 저장
+      const savedTemplate = await saveTemplate({
+        eventId: null,
+        templateName: templateName.trim(),
+        canvasJson: canvasJson,
+        isDefault: false,
+        isGlobal: true,
+        templateSettings: null,
+        paperWidthCm: 9.0,
+        paperHeightCm: 12.5,
+        backgroundImageUrl: null,
+        printAreas: null
+      })
       
-      // 전역 템플릿으로 저장
-      const result = await saveNamecardTemplate(eventId, templateName.trim(), currentCanvasJson)
-      const { data, error } = result
-      
-      if (error) throw error
-      
-      if (data) {
-        setTemplates(prev => [data, ...prev])
-      }
-      
-      console.log('Global template saved successfully:', data)
+      console.log('Global template saved successfully:', savedTemplate)
       setTemplateName('')
       setShowSaveForm(false)
       
@@ -85,13 +85,22 @@ export default function NamecardTemplateManager({
       await loadTemplates()
       
       if (onTemplateSave) {
-        onTemplateSave(data)
+        // namecardDatabase 형식과 호환되도록 변환
+        onTemplateSave({
+          id: savedTemplate.id,
+          template_name: savedTemplate.templateName,
+          canvas_json: savedTemplate.canvasJson,
+          is_default: savedTemplate.isDefault,
+          is_global: savedTemplate.isGlobal,
+          created_at: savedTemplate.createdAt,
+          updated_at: savedTemplate.updatedAt
+        })
       }
       
       alert('템플릿이 성공적으로 저장되었습니다.')
     } catch (err) {
       console.error('Error saving template:', err)
-      alert(`템플릿 저장 중 오류가 발생했습니다: ${err.message}`)
+      alert(`템플릿 저장 중 오류가 발생했습니다: ${err.message || err}`)
     } finally {
       setSaving(false)
     }
@@ -101,96 +110,96 @@ export default function NamecardTemplateManager({
     if (!confirm('이 템플릿을 삭제하시겠습니까?')) return
 
     try {
-      const { error } = await deleteNamecardTemplate(templateId)
-      
-      if (error) throw error
-      
+      await deleteTemplate(templateId)
       setTemplates(prev => prev.filter(t => t.id !== templateId))
+      alert('템플릿이 삭제되었습니다.')
     } catch (err) {
       console.error('Error deleting template:', err)
-      alert('템플릿 삭제 중 오류가 발생했습니다.')
+      alert(`템플릿 삭제 중 오류가 발생했습니다: ${err.message || err}`)
     }
   }
 
   const handleSetDefault = async (templateId) => {
     try {
-      const { error } = await setDefaultTemplate(eventId, templateId)
-      if (error) throw error
+      await setDefaultTemplate(templateId)
       
       setTemplates(prev => 
-        prev.map(t => ({ ...t, is_default: t.id === templateId }))
+        prev.map(t => ({ ...t, isDefault: t.id === templateId }))
       )
+      alert('기본 템플릿으로 설정되었습니다.')
     } catch (err) {
       console.error('Error setting default template:', err)
-      alert('기본 템플릿 설정 중 오류가 발생했습니다.')
+      alert(`기본 템플릿 설정 중 오류가 발생했습니다: ${err.message || err}`)
     }
   }
 
   const handleDuplicateTemplate = async (template) => {
-    const newName = `${template.template_name} (복사본)`
+    const newName = `${template.templateName || template.template_name} (복사본)`
     try {
-      const { data, error } = await duplicateNamecardTemplate(template.id, newName)
-      if (error) throw error
-      
-      setTemplates(prev => [data, ...prev])
+      const duplicated = await duplicateTemplate(template.id, newName)
+      setTemplates(prev => [duplicated, ...prev])
+      alert('템플릿이 복사되었습니다.')
     } catch (err) {
       console.error('Error duplicating template:', err)
-      alert('템플릿 복사 중 오류가 발생했습니다.')
+      alert(`템플릿 복사 중 오류가 발생했습니다: ${err.message || err}`)
     }
   }
-
 
   const handleLoadTemplate = async (templateId) => {
     try {
       setLoading(true)
-      const { data, error } = await getNamecardTemplateById(templateId)
-      if (error) throw error
+      const template = await getTemplateById(templateId)
       
-      console.log('Loading template:', data)
+      if (!template) {
+        throw new Error('템플릿을 찾을 수 없습니다.')
+      }
+      
+      console.log('Loading template:', template)
       
       if (onTemplateSelect) {
-        onTemplateSelect(data)
+        // namecardDatabase 형식과 호환되도록 변환
+        onTemplateSelect({
+          id: template.id,
+          template_name: template.templateName,
+          templateName: template.templateName,
+          canvas_json: template.canvasJson,
+          canvasJson: template.canvasJson,
+          is_default: template.isDefault,
+          is_global: template.isGlobal,
+          created_at: template.createdAt,
+          updated_at: template.updatedAt
+        })
       }
       
       alert('템플릿이 불러와졌습니다.')
     } catch (err) {
       console.error('Error loading template:', err)
-      alert(`템플릿 불러오기 중 오류가 발생했습니다: ${err.message}`)
+      alert(`템플릿 불러오기 중 오류가 발생했습니다: ${err.message || err}`)
     } finally {
       setLoading(false)
     }
   }
 
   const handleShowJson = (template) => {
-    setSelectedTemplateJson(template.canvas_json)
+    setSelectedTemplateJson(template.canvasJson || template.canvas_json)
     setShowJsonModal(true)
   }
 
   const handleTemplateSelect = (template) => {
     if (onTemplateSelect) {
-      onTemplateSelect(template)
-    }
-  }
-
-  const handleMigrateTemplates = async () => {
-    if (!confirm('기존 행사별 템플릿들을 전역 템플릿으로 마이그레이션하시겠습니까?')) return
-
-    try {
-      setLoading(true)
-      const result = await migrateTemplatesToGlobal()
-      
-      if (result.success) {
-        alert(`마이그레이션 완료!\n- 마이그레이션된 템플릿: ${result.migratedCount}개\n- 총 전역 템플릿: ${result.totalGlobalTemplates}개`)
-        // 템플릿 목록 새로고침
-        await loadTemplates()
-      } else {
-        alert(`마이그레이션 실패: ${result.error?.message || '알 수 없는 오류'}`)
+      // namecardDatabase 형식과 호환되도록 변환
+      const compatibleTemplate = {
+        id: template.id,
+        template_name: template.templateName || template.template_name,
+        templateName: template.templateName || template.template_name,
+        canvas_json: template.canvasJson || template.canvas_json,
+        canvasJson: template.canvasJson || template.canvas_json,
+        is_default: template.isDefault !== undefined ? template.isDefault : template.is_default,
+        is_global: template.isGlobal !== undefined ? template.isGlobal : template.is_global,
+        created_at: template.createdAt || template.created_at,
+        updated_at: template.updatedAt || template.updated_at
       }
-    } catch (err) {
-      console.error('Error migrating templates:', err)
-      alert('마이그레이션 중 오류가 발생했습니다.')
-    } finally {
-      setLoading(false)
+      onTemplateSelect(compatibleTemplate)
     }
   }
 
@@ -215,23 +224,16 @@ export default function NamecardTemplateManager({
         </div>
         <div className="flex space-x-2">
           <button
-            onClick={handleMigrateTemplates}
-            className="px-3 py-2 rounded-md transition-colors text-sm font-medium bg-purple-600 text-white hover:bg-purple-700"
-            title="기존 행사별 템플릿들을 전역으로 마이그레이션"
-          >
-            마이그레이션
-          </button>
-          <button
             onClick={() => setShowSaveForm(true)}
             className={`px-3 py-2 rounded-md transition-colors text-sm font-medium ${
-              currentCanvasJson 
+              (getCurrentCanvasJson ? getCurrentCanvasJson() : currentCanvasJson)
                 ? 'bg-blue-600 text-white hover:bg-blue-700' 
                 : 'bg-gray-400 text-gray-200 cursor-not-allowed'
             }`}
-            disabled={!currentCanvasJson}
-            title={currentCanvasJson ? '현재 디자인을 템플릿으로 저장' : '명찰을 편집한 후 저장 가능'}
+            disabled={!(getCurrentCanvasJson ? getCurrentCanvasJson() : currentCanvasJson)}
+            title={(getCurrentCanvasJson ? getCurrentCanvasJson() : currentCanvasJson) ? '현재 디자인을 템플릿으로 저장' : '명찰을 편집한 후 저장 가능'}
           >
-            {currentCanvasJson ? '현재 디자인 저장' : '저장 불가 (편집 필요)'}
+            {(getCurrentCanvasJson ? getCurrentCanvasJson() : currentCanvasJson) ? '현재 디자인 저장' : '저장 불가 (편집 필요)'}
           </button>
         </div>
       </div>
@@ -282,7 +284,7 @@ export default function NamecardTemplateManager({
                 <div
                   key={template.id}
                   className={`p-2 rounded border cursor-pointer transition-colors ${
-                    template.is_default
+                    (template.isDefault || template.is_default)
                       ? 'bg-blue-50 border-blue-200'
                       : 'bg-white border-gray-200 hover:bg-gray-50'
                   }`}
@@ -292,16 +294,16 @@ export default function NamecardTemplateManager({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center space-x-1 mb-1">
                         <h4 className="text-xs font-medium text-gray-900 truncate">
-                          {template.template_name}
+                          {template.templateName || template.template_name}
                         </h4>
-                        {template.is_default && (
+                        {(template.isDefault || template.is_default) && (
                           <span className="text-xs bg-blue-100 text-blue-700 px-1 py-0.5 rounded-full">
                             기본
                           </span>
                         )}
                       </div>
                       <p className="text-xs text-gray-500">
-                        {new Date(template.created_at).toLocaleDateString('ko-KR')}
+                        {new Date(template.createdAt || template.created_at).toLocaleDateString('ko-KR')}
                       </p>
                     </div>
                     <div className="flex items-center space-x-1 ml-2">
@@ -341,7 +343,7 @@ export default function NamecardTemplateManager({
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                       </button>
-                    {!template.is_default && (
+                    {!(template.isDefault || template.is_default) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()

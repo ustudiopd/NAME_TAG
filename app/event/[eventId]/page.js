@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { getEventById } from '../../../lib/eventDatabase'
-import EventDetailView from '../../../components/EventDetailView'
+import EventDetailView from '../../../components/EventDetailView_new'
 import { TestDataButton } from '../../../lib/testData'
 
 export default function EventPage() {

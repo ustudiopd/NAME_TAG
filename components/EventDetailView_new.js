@@ -5,8 +5,9 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNamecardEditor } from '../hooks/useNamecardEditor'
+import { getProfilesByEvent } from '../lib/database'
 import ProfileList from './ProfileList'
 import PropertyPanel from './PropertyPanel_new'
 import CanvasViewport from './CanvasViewport'
@@ -16,6 +17,7 @@ import NamecardTemplateManager from './NamecardTemplateManager'
 import NamecardTemplateSettings from './NamecardTemplateSettings'
 import OutputPanel from './OutputPanel'
 import PrizeDrawPanel from './PrizeDrawPanel'
+import ImageUploadLibrary from './ImageUploadLibrary'
 
 export default function EventDetailView({ 
   event, 
@@ -40,6 +42,7 @@ export default function EventDetailView({
   const [isTemplateCollapsed, setIsTemplateCollapsed] = useState(true)
   const [isOutputCollapsed, setIsOutputCollapsed] = useState(true)
   const [isPrizeDrawCollapsed, setIsPrizeDrawCollapsed] = useState(true)
+  const [showBackgroundImageModal, setShowBackgroundImageModal] = useState(false) // 배경 이미지 모달 상태
   const [selectionMode, setSelectionMode] = useState('individual')
   const [isClient, setIsClient] = useState(false)
 
@@ -52,12 +55,11 @@ export default function EventDetailView({
   }, [profiles, selectedProfile, onProfileSelect])
 
   // 선택된 프로필이 변경될 때 에디터에 바인딩
-  // editor?.commands는 의존성에서 제거 (무한 루프 방지)
   useEffect(() => {
     if (editor?.commands && selectedProfile) {
       editor.commands.bindProfile(selectedProfile)
     }
-  }, [selectedProfile?.id]) // editor?.commands 제거로 무한 루프 해결
+  }, [selectedProfile?.id, editor?.commands])
 
   // 클라이언트 렌더링 완료 확인
   useEffect(() => {
@@ -84,31 +86,53 @@ export default function EventDetailView({
   }
 
   // 템플릿 선택 핸들러
-  const handleTemplateSelect = (template) => {
-    if (editor?.commands && template?.canvas_json) {
+  const handleTemplateSelect = useCallback(async (template) => {
+    if (editor?.commands && template) {
+      console.log('Loading template:', template.template_name || template.templateName)
       // 템플릿을 캔버스에 로드
-      editor.commands.loadTemplate(template.id)
+      await editor.commands.loadTemplate(template)
+      
+      // 템플릿 로드 후 프로필 텍스트가 비어있을 수 있으므로
+      // 현재 선택된 프로필이 있다면 다시 바인딩
+      if (selectedProfile) {
+        editor.commands.bindProfile(selectedProfile)
+      }
     }
-  }
+  }, [editor?.commands, selectedProfile])
 
   // 템플릿 저장 핸들러
-  const handleTemplateSave = (template) => {
-    console.log('Template saved:', template)
+  const handleTemplateSave = async (templateData) => {
+    console.log('Template saved:', templateData)
+    // NamecardTemplateManager에서 이미 저장 처리하므로 여기서는 알림만
+    if (templateData) {
+      setCurrentTemplate(templateData)
+    }
   }
 
   // 현재 캔버스 JSON 가져오기
   const getCurrentCanvasJson = () => {
-    if (editor?.commands) {
+    if (editor?.commands?.getCanvasJSON) {
+      return editor.commands.getCanvasJSON()
+    }
+    if (editor?.commands?.exportJson) {
       return editor.commands.exportJson()
     }
     return null
   }
 
-  // 배경 이미지 업로드 핸들러
-  const handleBackgroundImage = () => {
-    // TODO: 이미지 업로드 UI 구현
-    console.log('Background image upload')
+  // 배경 이미지 선택 핸들러
+  const handleBackgroundImageSelect = (imageData) => {
+    if (editor?.commands && imageData?.url) {
+      console.log('Setting background image:', imageData.url)
+      editor.commands.setBackgroundImage(imageData.url)
+      setShowBackgroundImageModal(false)
+    }
   }
+
+  const handleBackgroundImage = useCallback(() => {
+    console.log('Background image button clicked, opening modal')
+    setShowBackgroundImageModal(true)
+  }, [])
 
   return (
     <div className="h-full">
@@ -188,7 +212,7 @@ export default function EventDetailView({
                   eventId={event.id}
                   onTemplateSelect={handleTemplateSelect}
                   onTemplateSave={handleTemplateSave}
-                  currentCanvasJson={getCurrentCanvasJson()}
+                  getCurrentCanvasJson={getCurrentCanvasJson}
                 />
               )}
             </div>
@@ -361,6 +385,46 @@ export default function EventDetailView({
           eventId={event.id}
         />
       )}
+
+      {/* 배경 이미지 선택 모달 */}
+      {showBackgroundImageModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]"
+          onClick={(e) => {
+            // 모달 배경 클릭 시 닫기
+            if (e.target === e.currentTarget) {
+              setShowBackgroundImageModal(false)
+            }
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-lg font-semibold text-gray-900">배경 이미지 선택</h3>
+              <button
+                onClick={() => {
+                  console.log('Closing background image modal')
+                  setShowBackgroundImageModal(false)
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-4">
+              <ImageUploadLibrary
+                onImageSelect={handleBackgroundImageSelect}
+                type="background"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+

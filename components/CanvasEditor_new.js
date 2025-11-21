@@ -7,6 +7,13 @@ import { getDefaultTemplate } from '../lib/namecardDatabase'
 import ImageUpload from './ImageUpload'
 import ImageUploadLibrary from './ImageUploadLibrary'
 import { uploadImage } from '../lib/storage'
+import { 
+  saveTextObjectSnapshot, 
+  getAllSnapshots,
+  getSnapshotById,
+  getLatestSnapshotByEvent,
+  saveOrUpdateEventSnapshot
+} from '../lib/textObjectSnapshotDatabase'
 
 // Fabric.js를 동적으로 import하여 SSR 문제 해결
 let fabric = null
@@ -52,6 +59,18 @@ export default function CanvasEditor({
 }) {
   const canvasRef = useRef(null)
   const fabricCanvasRef = useRef(null)
+  const lastProfileIdRef = useRef(null)
+  const lastProfileDataRef = useRef(null) // 마지막 프로필 데이터 저장
+  const isUserInteractingRef = useRef(false) // 사용자 상호작용 감지
+  // 🔹 레이아웃/텍스트 "저장 컨테이너"
+  const layoutStateRef = useRef({ company: null, name: null, title: null }) // 각각 fabric IText 객체의 좌표/스타일 스냅샷
+  const currentTextRef = useRef({ company: '', name: '', title: '' }) // 🔹 초기값 개념 제거
+  const currentProfileSigRef = useRef('')
+  const isSnapshotJustRestoredRef = useRef(false) // 🔹 스냅샷 복원 직후 플래그
+  const hasProfileBeenAppliedRef = useRef(false) // 🔹 프로필 데이터가 한 번이라도 적용된 적이 있는지 플래그
+  const hasRestoredSnapshotForEventRef = useRef(false) // 🔹 이벤트 당 1회만 복원
+  const isLayoutDirtyRef = useRef(false) // 🔹 레이아웃이 변경되었는지 표시
+  const saveTimerRef = useRef(null) // 🔹 스냅샷 저장 디바운스 타이머
   const [isCanvasReady, setIsCanvasReady] = useState(false)
   const [contextMenu, setContextMenu] = useState({ visible: false, position: null })
   const [rightClickedObject, setRightClickedObject] = useState(null)
@@ -85,6 +104,84 @@ export default function CanvasEditor({
     } catch (error) {
       console.error('Error rendering canvas:', error)
       return false
+    }
+  }
+
+  // fabric IText의 좌표/스타일만 뽑는 헬퍼
+  const pickLayout = (obj) => obj ? {
+    left: obj.left,
+    top: obj.top,
+    angle: obj.angle || 0,
+    fontSize: obj.fontSize,
+    fontWeight: obj.fontWeight,
+    fontFamily: obj.fontFamily,
+    fill: obj.fill,
+    textAlign: obj.textAlign,
+    originX: obj.originX,
+    originY: obj.originY,
+    lineHeight: obj.lineHeight,
+    charSpacing: obj.charSpacing,
+    scaleX: obj.scaleX || 1,
+    scaleY: obj.scaleY || 1
+  } : null
+
+  const applyLayout = (obj, snap) => {
+    if (!obj || !snap) {
+      console.warn('⚠️ applyLayout: 객체 또는 스냅샷이 없음', { obj: !!obj, snap: !!snap })
+      return
+    }
+    
+    // 🔹 레이아웃만 적용 (텍스트는 절대 변경하지 않음)
+    // 텍스트를 명시적으로 제외하고 레이아웃 속성만 적용
+    const savedText = obj.text || '\u00A0' // non-breaking space
+    const savedTextAlign = obj.textAlign
+    const savedDataField = obj.dataField
+    const savedVisible = obj.visible !== false // visible이 false가 아니면 true
+    const savedOpacity = obj.opacity !== undefined ? obj.opacity : 1
+    
+    // 레이아웃 속성만 추출 (텍스트 관련 속성 제외)
+    const layoutOnly = { ...snap }
+    delete layoutOnly.text // 혹시 모를 텍스트 속성 제거
+    delete layoutOnly.dataField // dataField는 유지해야 함
+    
+    // 레이아웃 적용
+    obj.set(layoutOnly)
+    
+    // 텍스트, textAlign, dataField, visible, opacity 명시적으로 복원 (절대 보장)
+    // setCoords 전에 복원하여 좌표 계산에 영향 없도록 함
+    if (obj.text !== savedText) {
+      obj.set('text', savedText)
+    }
+    if (obj.textAlign !== savedTextAlign) {
+      obj.set('textAlign', savedTextAlign)
+    }
+    if (obj.dataField !== savedDataField) {
+      obj.set('dataField', savedDataField)
+    }
+    if (obj.visible !== savedVisible) {
+      obj.set('visible', savedVisible)
+    }
+    if (obj.opacity !== savedOpacity) {
+      obj.set('opacity', savedOpacity)
+    }
+    
+    obj.setCoords()
+    
+    // 최종 확인: 텍스트와 가시성이 여전히 유지되는지 확인
+    if (obj.text !== savedText) {
+      console.error(`❌ applyLayout: 텍스트가 변경됨! 복원 시도: ${savedText} (현재: ${obj.text})`)
+      obj.set('text', savedText)
+      obj.setCoords()
+    }
+    if (obj.visible === false) {
+      console.error(`❌ applyLayout: 객체가 숨겨짐! 복원 시도`)
+      obj.set('visible', true)
+      obj.setCoords()
+    }
+    if (obj.opacity === 0) {
+      console.error(`❌ applyLayout: 객체 투명도가 0! 복원 시도`)
+      obj.set('opacity', 1)
+      obj.setCoords()
     }
   }
 
@@ -347,10 +444,8 @@ export default function CanvasEditor({
       canvas.renderAll()
     }, 1000)
 
-    // 이벤트 리스너 등록
-    canvas.on('object:moving', () => {
-      if (onCanvasUpdate) onCanvasUpdate()
-    })
+    // 이벤트 리스너 등록 (중복 제거 - 위에서 이미 등록됨)
+    // canvas.on('object:moving', ...) 는 위에서 이미 처리됨
 
 
     // 배경 이미지 선택을 위한 더블클릭 이벤트
@@ -365,8 +460,24 @@ export default function CanvasEditor({
       }
     })
 
-    // Ctrl + 클릭으로 배경 이미지 선택
+    // mouse:down 이벤트 통합 (Ctrl+클릭 배경 선택, 우클릭 메뉴, 일반 클릭)
     canvas.on('mouse:down', (e) => {
+      // mouse:down에서는 isUserInteractingRef를 설정하지 않음
+      // 실제 드래그가 시작될 때(object:moving)만 설정
+      
+      // 우클릭 처리 (최우선)
+      if (e.e.button === 2) {
+        e.e.preventDefault()
+        const pointer = canvas.getPointer(e.e)
+        setContextMenu({
+          visible: true,
+          position: { x: pointer.x, y: pointer.y }
+        })
+        setRightClickedObject(e.target)
+        return
+      }
+      
+      // Ctrl + 클릭으로 배경 이미지 선택
       if (e.e.ctrlKey || e.e.metaKey) {
         const objects = canvas.getObjects()
         const backgroundImage = objects.find(obj => obj.type === 'background')
@@ -376,23 +487,144 @@ export default function CanvasEditor({
           safeRenderAll(canvas)
           console.log('Ctrl + 클릭으로 배경 이미지가 선택되었습니다.')
         }
-      } else {
-        // 일반 클릭 시 배경 이미지가 아닌 객체 우선 선택
-        const target = e.target
-        if (target && target.type !== 'background') {
-          canvas.setActiveObject(target)
-          safeRenderAll(canvas)
-        }
+        return
+      }
+      
+      // 일반 클릭 시 배경 이미지가 아닌 객체 선택
+      const target = e.target
+      if (target && target.type !== 'background') {
+        // 명시적으로 객체 선택
+        canvas.setActiveObject(target)
+        safeRenderAll(canvas)
+        console.log('Object selected:', target.type, target.text || target.dataField)
+        // 🔹 클릭 시 프로필 데이터 반영 제거 - 객체 선택만 하고 프로필 업데이트는 하지 않음
+        // 프로필 업데이트는 명단 클릭 시에만 발생해야 함
+      } else if (!target) {
+        // 배경 클릭 시 선택 해제
+        canvas.discardActiveObject()
+        safeRenderAll(canvas)
+      }
+      
+      // 컨텍스트 메뉴 닫기
+      setContextMenu({ visible: false, position: null })
+    })
+
+    // 사용자 상호작용 종료 감지
+    canvas.on('mouse:up', () => {
+      isUserInteractingRef.current = false
+    })
+
+    canvas.on('mouse:out', () => {
+      isUserInteractingRef.current = false
+    })
+
+    canvas.on('object:moving', () => {
+      isUserInteractingRef.current = true
+      isLayoutDirtyRef.current = true // 🔹 레이아웃 변경 표시
+      // 드래그 중에는 onCanvasUpdate 호출하지 않음 (과도한 로그 방지)
+      // 드래그 완료 시 object:modified에서 처리
+      // 🔹 이동 시작 시 현재 텍스트 저장 (이동 중 텍스트 변경 감지용)
+      const obj = canvas.getActiveObject()
+      if (obj && obj.type === 'i-text' && obj.dataField) {
+        obj._movingStartText = obj.text // 이동 시작 시 텍스트 저장
       }
     })
 
-    canvas.on('object:scaling', (e) => {
-      handleObjectScaling(e)
-      if (onCanvasUpdate) onCanvasUpdate()
-    })
-
-    canvas.on('object:rotating', () => {
-      if (onCanvasUpdate) onCanvasUpdate()
+    canvas.on('object:modified', () => {
+      // 약간의 지연 후 false로 설정 (드래그 완료 후)
+      setTimeout(() => {
+        isUserInteractingRef.current = false
+      }, 100)
+      
+      // 🔹 레이아웃 변경 시 저장(드래그 등)
+      const obj = canvas.getActiveObject()
+      if (obj && obj.type === 'i-text' && obj.dataField) {
+        layoutStateRef.current[obj.dataField] = pickLayout(obj)
+        
+        // 🔹 텍스트는 절대 복원하지 않음 - 현재 캔버스의 텍스트를 그대로 유지
+        // 프로필 바인딩으로 업데이트된 텍스트나 사용자가 수정한 텍스트 모두 유지
+        const currentText = obj.text
+        
+        // 🔹 currentTextRef는 현재 캔버스 텍스트로 동기화만 함 (복원하지 않음)
+        // 이동 시작 시 저장된 텍스트와 비교하여 실제 텍스트 변경 여부 확인
+        const textChanged = obj._movingStartText !== undefined && obj._movingStartText !== currentText
+        
+        if (textChanged) {
+          // 사용자가 직접 텍스트를 수정한 경우
+          // 🔹 플레이스홀더(non-breaking space)는 빈 문자열로 변환
+          const normalizedText = currentText === '\u00A0' ? '' : currentText
+          currentTextRef.current[obj.dataField] = normalizedText
+          console.log(`Layout snapshot updated for ${obj.dataField}, text changed by user: ${normalizedText || '(empty)'} (was: ${obj._movingStartText === '\u00A0' ? '(empty)' : obj._movingStartText})`)
+        } else {
+          // 레이아웃만 변경된 경우 - currentTextRef를 현재 캔버스 텍스트로 동기화
+          // (프로필 바인딩으로 업데이트된 텍스트가 캔버스에 반영되었지만 currentTextRef가 업데이트되지 않은 경우)
+          // 🔹 플레이스홀더(non-breaking space)는 빈 문자열로 변환
+          const normalizedText = currentText === '\u00A0' ? '' : currentText
+          if (currentTextRef.current[obj.dataField] !== normalizedText) {
+            currentTextRef.current[obj.dataField] = normalizedText
+            console.log(`Layout snapshot updated for ${obj.dataField}, text synced: ${normalizedText || '(empty)'} (was: ${currentTextRef.current[obj.dataField] || '(empty)'})`)
+          } else {
+            console.log(`Layout snapshot updated for ${obj.dataField}, layout only (text unchanged): ${normalizedText || '(empty)'}`)
+          }
+        }
+        // 이동 시작 텍스트 초기화
+        delete obj._movingStartText
+      }
+      
+      // 🔹 이동/수정이 끝났을 때 스냅샷 저장(디바운스)
+      if (eventId) {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = setTimeout(async () => {
+          try {
+            // 🔹 플레이스홀더나 빈 문자열은 null로 저장 (실제 텍스트가 없음을 의미)
+            const normalizeTextForSnapshot = (text) => {
+              if (!text || text === '\u00A0' || text.trim().length === 0) {
+                return null
+              }
+              return text
+            }
+            
+            const snap = {
+              eventId,
+              snapshotName: `에디트창_스냅샷_${new Date().toISOString()}`,
+              companyText: normalizeTextForSnapshot(currentTextRef.current.company),
+              companyLayout: layoutStateRef.current.company,
+              nameText: normalizeTextForSnapshot(currentTextRef.current.name),
+              nameLayout: layoutStateRef.current.name,
+              titleText: normalizeTextForSnapshot(currentTextRef.current.title),
+              titleLayout: layoutStateRef.current.title,
+              fullState: {
+                company: { 
+                  text: normalizeTextForSnapshot(currentTextRef.current.company), 
+                  layout: layoutStateRef.current.company 
+                },
+                name: { 
+                  text: normalizeTextForSnapshot(currentTextRef.current.name), 
+                  layout: layoutStateRef.current.name 
+                },
+                title: { 
+                  text: normalizeTextForSnapshot(currentTextRef.current.title), 
+                  layout: layoutStateRef.current.title 
+                }
+              }
+            }
+            const result = await saveOrUpdateEventSnapshot(snap)
+            if (result.success) {
+              console.log('💾 레이아웃 변경 스냅샷 저장:', result.data?.id)
+              isLayoutDirtyRef.current = false
+            }
+          } catch (e) {
+            console.warn('스냅샷 저장 실패:', e)
+          }
+        }, 400) // 디바운스
+      }
+      
+      if (onCanvasUpdate) {
+        onCanvasUpdate({
+          type: 'modification',
+          object: canvas.getActiveObject()
+        })
+      }
     })
 
     canvas.on('selection:created', (e) => {
@@ -400,6 +632,10 @@ export default function CanvasEditor({
       if (activeObject) {
         // 배경 이미지가 아닌 경우에만 부모 컴포넌트에 전달
         if (activeObject.type !== 'background') {
+          // 🔹 객체 선택 시 텍스트는 절대 변경하지 않음
+          // Fabric.js가 내부적으로 텍스트를 변경하지 않으므로 복원 로직 제거
+          // 텍스트는 프로필 바인딩이나 사용자 수정으로만 변경되어야 함
+          
           if (onPropertyChange) {
             onPropertyChange('selectedObject', activeObject)
           }
@@ -411,6 +647,9 @@ export default function CanvasEditor({
               properties: getObjectProperties(activeObject)
             })
           }
+          
+          // 🔹 객체 선택 시 프로필 데이터 반영 제거
+          // mouse:down에서만 처리하여 중복 호출 방지
         }
         
         // 배경 이미지 선택 시 상태 업데이트
@@ -463,20 +702,6 @@ export default function CanvasEditor({
       setIsBackgroundSelected(false)
     })
 
-    // 우클릭 이벤트
-    canvas.on('mouse:down', (e) => {
-      if (e.e.button === 2) { // 우클릭
-        e.e.preventDefault()
-        const pointer = canvas.getPointer(e.e)
-        setContextMenu({
-          visible: true,
-          position: { x: pointer.x, y: pointer.y }
-        })
-        setRightClickedObject(e.target)
-      } else {
-        setContextMenu({ visible: false, position: null })
-      }
-    })
 
     }
 
@@ -507,8 +732,16 @@ export default function CanvasEditor({
     const centerX = canvas.width / 2  // 170
     const centerY = canvas.height / 2 // 236
     
+    // 🔹 텍스트는 최소한의 플레이스홀더로 시작 (공백만으로는 렌더링되지 않을 수 있음)
+    // 프로필이 선택되면 그때 실제 텍스트로 업데이트됨
+    // 공백 대신 보이지 않는 문자(non-breaking space) 사용하여 객체가 항상 보이도록 함
+    const companyTextValue = currentTextRef.current.company || '\u00A0' // non-breaking space
+    const nameTextValue = currentTextRef.current.name || '\u00A0'
+    const titleTextValue = currentTextRef.current.title || '\u00A0'
+    
     // 회사명 텍스트
-    const companyText = new fabric.IText('회사명', {
+    const companyText = new fabric.IText(companyTextValue, {
+      dataField: 'company',
       left: centerX,
       top: centerY - 80,
       fontSize: 24,
@@ -520,10 +753,11 @@ export default function CanvasEditor({
       zIndex: 1000
     })
     canvas.add(companyText)
-    console.log('Added company text at:', centerX, centerY - 80)
+    console.log('Added company text at:', centerX, centerY - 80, 'text:', companyTextValue)
 
     // 이름 텍스트
-    const nameText = new fabric.IText('이름', {
+    const nameText = new fabric.IText(nameTextValue, {
+      dataField: 'name',
       left: centerX,
       top: centerY,
       fontSize: 32,
@@ -536,10 +770,11 @@ export default function CanvasEditor({
       zIndex: 1000
     })
     canvas.add(nameText)
-    console.log('Added name text at:', centerX, centerY)
+    console.log('Added name text at:', centerX, centerY, 'text:', nameTextValue)
 
     // 직급 텍스트
-    const titleText = new fabric.IText('직급', {
+    const titleText = new fabric.IText(titleTextValue, {
+      dataField: 'title',
       left: centerX,
       top: centerY + 80,
       fontSize: 20,
@@ -551,99 +786,302 @@ export default function CanvasEditor({
       zIndex: 1000
     })
     canvas.add(titleText)
-    console.log('Added title text at:', centerX, centerY + 80)
+    console.log('Added title text at:', centerX, centerY + 80, 'text:', titleTextValue)
+
+    // 🔹 최초 레이아웃 스냅샷 저장 (템플릿 생성 시에만)
+    // currentTextRef는 프로필 데이터가 있을 때만 업데이트되므로 여기서 초기화하지 않음
+    layoutStateRef.current = {
+      company: pickLayout(companyText),
+      name: pickLayout(nameText),
+      title: pickLayout(titleText),
+    }
+    // currentTextRef는 프로필 업데이트 시에만 변경되므로 초기화하지 않음
+    // 초기값은 컴포넌트 마운트 시 설정된 값 유지
 
     safeRenderAll(canvas)
     console.log('Default template created, total objects:', canvas.getObjects().length)
   }
 
-  // 프로필 데이터로 캔버스 업데이트 (위치 유지하면서 텍스트만 변경)
+  // 프로필 데이터로 캔버스 업데이트 (dataField 기반 안정 매핑, 위치 유지)
+  // 🔹 단일 소스 오브 트루스: Fabric.js Canvas 객체를 유일한 진실의 원천으로 사용
   const updateCanvasWithProfile = useCallback((profile) => {
     if (!fabricCanvasRef.current) return
-
-    const canvas = fabricCanvasRef.current
-    
-    // 캔버스가 유효한지 확인
-    if (!canvas || typeof canvas.renderAll !== 'function') {
-      console.warn('Canvas is not properly initialized')
+    if (isUserInteractingRef.current) {
+      console.log('Skip binding: user interacting')
       return
     }
 
+    const canvas = fabricCanvasRef.current
     const objects = canvas.getObjects()
+    
+    // dataField로 직접 찾기
+    const byField = (f) => objects.find(o => o.type === 'i-text' && o.dataField === f)
 
-    console.log('Updating canvas with profile:', profile)
-    console.log('Current objects count:', objects.length)
+    const companyObj = byField('company')
+    const nameObj = byField('name')
+    const titleObj = byField('title')
+    
+    // 🔹 객체 존재 확인 및 디버깅
+    if (!companyObj || !nameObj || !titleObj) {
+      console.error('❌ 텍스트 객체를 찾을 수 없음:', {
+        company: !!companyObj,
+        name: !!nameObj,
+        title: !!titleObj,
+        totalObjects: objects.length,
+        textObjects: objects.filter(o => o.type === 'i-text').map(o => ({
+          dataField: o.dataField,
+          text: o.text,
+          type: o.type,
+          visible: o.visible,
+          opacity: o.opacity
+        }))
+      })
+      // 객체를 찾을 수 없어도 계속 진행 (객체가 나중에 생성될 수 있음)
+      // return하지 않고 부분 업데이트 진행
+    }
 
-    // 🔥 새로운 로직: 텍스트 객체들을 Y 좌표 순으로 정렬하여 순서대로 업데이트
-    const textObjects = objects
-      .filter(obj => obj.type === 'i-text')
-      .sort((a, b) => (a.top || 0) - (b.top || 0))
-
-    console.log('Text objects found:', textObjects.length)
-
-    // 텍스트 객체를 순서대로 업데이트 (위치 기반)
-    textObjects.forEach((obj, index) => {
-      const currentText = obj.text || ''
-      console.log(`Text object ${index}: "${currentText}" at position:`, obj.left, obj.top)
+    // 🔹 단일 텍스트 업데이트 함수: 캔버스 객체를 단일 소스로 사용
+    // 우선순위: 프로필 데이터 > 현재 캔버스 텍스트 > 공백 유지
+    // 🔹 스냅샷 복원 직후라면 스냅샷 텍스트를 보존하되, 프로필 데이터도 반영
+    const updateTextObject = (obj, profileValue, fieldName) => {
+      if (!obj) return null
       
-      // 첫 번째 텍스트 객체는 회사명으로 설정
-      if (index === 0) {
-        obj.set('text', profile.company || '회사명')
-        console.log('Updated first text to company:', profile.company)
-      }
-      // 두 번째 텍스트 객체는 이름으로 설정
-      else if (index === 1) {
-        obj.set('text', profile.name || '이름')
-        console.log('Updated second text to name:', profile.name)
-      }
-      // 세 번째 텍스트 객체는 직급으로 설정
-      else if (index === 2) {
-        obj.set('text', profile.title || '직급')
-        console.log('Updated third text to title:', profile.title)
-      }
-      // 기존 키워드 매칭 로직도 유지 (호환성)
-      else {
-        const lowerText = currentText.toLowerCase()
-        
-        if (currentText === '회사명' || currentText === 'Company' || 
-            currentText === '회사' || currentText === 'company') {
-          obj.set('text', profile.company || '회사명')
-          console.log('Updated company text to:', profile.company)
+      const currentCanvasText = obj.text || '\u00A0'
+      const isPlaceholder = currentCanvasText === '\u00A0' || currentCanvasText.trim().length === 0
+      
+      // 🔹 스냅샷 복원 직후: 스냅샷 텍스트가 있으면 보존, 없으면 프로필 데이터 사용
+      if (isSnapshotJustRestoredRef.current) {
+        // 스냅샷 텍스트가 있으면 유지 (플레이스홀더가 아닌 경우)
+        if (!isPlaceholder) {
+          console.log(`✅ ${fieldName}: 스냅샷 복원 직후 - 텍스트 유지 - ${currentCanvasText}`)
+          return currentCanvasText
         }
-        else if (currentText === '이름' || currentText === 'Name' || 
-                 currentText === '성명' || currentText === 'fullname') {
-          obj.set('text', profile.name || '이름')
-          console.log('Updated name text to:', profile.name)
-        }
-        else if (currentText === '직급' || currentText === 'Title' || 
-                 currentText === 'Position' || currentText === '부서') {
-          obj.set('text', profile.title || '직급')
-          console.log('Updated title text to:', profile.title)
+        // 스냅샷 텍스트가 플레이스홀더면 프로필 데이터 사용
+        if (profile && profileValue && typeof profileValue === 'string' && profileValue.trim().length > 0) {
+          obj.set('text', profileValue)
+          console.log(`✅ ${fieldName}: 스냅샷 복원 직후 - 프로필 데이터 적용 - ${profileValue}`)
+          return profileValue
         }
       }
-    })
+      
+      // 일반적인 경우: 프로필 데이터가 있으면 사용
+      if (profile && profileValue && typeof profileValue === 'string' && profileValue.trim().length > 0) {
+        obj.set('text', profileValue)
+        console.log(`✅ ${fieldName}: 프로필 데이터 적용 - ${profileValue}`)
+        return profileValue
+      }
+      
+      // 프로필 데이터가 없으면 현재 캔버스 텍스트 유지 (플레이스홀더가 아닌 경우)
+      if (!isPlaceholder) {
+        console.log(`✅ ${fieldName}: 캔버스 텍스트 유지 - ${currentCanvasText}`)
+        return currentCanvasText
+      }
+      
+      // 모두 없으면 보이지 않는 문자 유지 (빈 문자열로 덮어쓰지 않음)
+      // non-breaking space를 사용하여 객체가 항상 보이도록 함
+      console.log(`✅ ${fieldName}: 플레이스홀더 유지`)
+      if (obj.text !== '\u00A0') {
+        obj.set('text', '\u00A0')
+      }
+      return '\u00A0' // non-breaking space
+    }
 
-    // 안전한 렌더링 (배포 환경 대응)
-    if (safeRenderAll(canvas)) {
-      console.log('Canvas updated with profile data')
+    // 텍스트 업데이트 (캔버스 객체에 직접 쓰기)
+    const finalCompany = companyObj ? updateTextObject(companyObj, profile?.company, '회사명') : null
+    const finalName = nameObj ? updateTextObject(nameObj, profile?.name, '이름') : null
+    const finalTitle = titleObj ? updateTextObject(titleObj, profile?.title, '직급') : null
+    
+    // 🔹 객체 가시성 확인 및 복원
+    if (companyObj && (!companyObj.visible || companyObj.opacity === 0)) {
+      console.warn('⚠️ 회사명 객체가 보이지 않음, 복원 시도')
+      companyObj.set({ visible: true, opacity: 1 })
+    }
+    if (nameObj && (!nameObj.visible || nameObj.opacity === 0)) {
+      console.warn('⚠️ 이름 객체가 보이지 않음, 복원 시도')
+      nameObj.set({ visible: true, opacity: 1 })
+    }
+    if (titleObj && (!titleObj.visible || titleObj.opacity === 0)) {
+      console.warn('⚠️ 직급 객체가 보이지 않음, 복원 시도')
+      titleObj.set({ visible: true, opacity: 1 })
+    }
+
+    // 🔹 레이아웃 적용 및 동기화 (텍스트 업데이트 후)
+    if (companyObj) {
+      // 레이아웃 적용 (텍스트는 이미 업데이트됨)
+      if (layoutStateRef.current.company) {
+        applyLayout(companyObj, layoutStateRef.current.company)
+      }
+      companyObj.setCoords()
+      // layoutStateRef를 현재 캔버스 객체 상태로 동기화
+      layoutStateRef.current.company = pickLayout(companyObj)
     }
     
-    // 배포 환경에서 안정적인 렌더링을 위한 추가 렌더링
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after profile update (1st)')
-    }, 50)
+    if (nameObj) {
+      // 레이아웃 적용 (텍스트는 이미 업데이트됨)
+      if (layoutStateRef.current.name) {
+        applyLayout(nameObj, layoutStateRef.current.name)
+      }
+      nameObj.setCoords()
+      // layoutStateRef를 현재 캔버스 객체 상태로 동기화
+      layoutStateRef.current.name = pickLayout(nameObj)
+    }
     
-    setTimeout(() => {
-      canvas.renderAll()
-      console.log('Canvas force rendered after profile update (2nd)')
-    }, 200)
+    if (titleObj) {
+      // 레이아웃 적용 (텍스트는 이미 업데이트됨)
+      if (layoutStateRef.current.title) {
+        applyLayout(titleObj, layoutStateRef.current.title)
+      }
+      titleObj.setCoords()
+      // layoutStateRef를 현재 캔버스 객체 상태로 동기화
+      layoutStateRef.current.title = pickLayout(titleObj)
+    }
+
+    // 🔹 스냅샷 복원 직후 플래그 해제
+    // (프로필 업데이트가 완료되었으므로 다음 업데이트부터는 정상 동작)
+    if (isSnapshotJustRestoredRef.current) {
+      isSnapshotJustRestoredRef.current = false
+      console.log('🔹 스냅샷 복원 직후 플래그 해제 (프로필 업데이트 완료 후)')
+    }
+
+    // 🔹 단일 동기화 지점: 캔버스 객체에서 읽어와서 currentTextRef 업데이트
+    // 쓰기는 항상 캔버스 객체에 직접, 읽기는 항상 캔버스 객체에서
+    // 플레이스홀더(non-breaking space)는 실제 텍스트로 간주하지 않음
+    currentTextRef.current = {
+      company: companyObj ? (companyObj.text === '\u00A0' ? '' : companyObj.text) : '',
+      name: nameObj ? (nameObj.text === '\u00A0' ? '' : nameObj.text) : '',
+      title: titleObj ? (titleObj.text === '\u00A0' ? '' : titleObj.text) : ''
+    }
     
-    setTimeout(() => {
+    // 🔹 프로필 데이터가 적용되었는지 확인하여 플래그 설정
+    if (profile && (finalCompany || finalName || finalTitle)) {
+      hasProfileBeenAppliedRef.current = true
+      console.log('🔹 프로필 데이터 적용 플래그 설정')
+    }
+    
+    console.log('💾 currentTextRef 동기화 완료 (캔버스 객체에서 읽어옴):', currentTextRef.current)
+    console.log('📝 텍스트 업데이트 요약:', {
+      profile: profile ? `${profile.name} (${profile.id})` : 'null',
+      company: finalCompany,
+      name: finalName,
+      title: finalTitle
+    })
+    
+    // 🔻 프로필 바인딩 단계에서는 스냅샷 저장하지 않음 (레이아웃 보존 목적)
+    // 스냅샷 저장은 object:modified(레이아웃이 바뀐 경우)에서만 수행
+    
+    canvas.renderAll()
+  }, [fabricCanvasRef, eventId])
+
+  // 스냅샷 복원 함수
+  const restoreSnapshot = useCallback(async (snapshot) => {
+    if (!fabricCanvasRef.current || !snapshot) return false
+
+    const canvas = fabricCanvasRef.current
+    const objects = canvas.getObjects()
+    
+    const byField = (f) => objects.find(o => o.type === 'i-text' && o.dataField === f)
+    
+    const companyObj = byField('company')
+    const nameObj = byField('name')
+    const titleObj = byField('title')
+
+    try {
+      // 🔹 layoutStateRef를 먼저 업데이트 (updateCanvasWithProfile에서 사용하기 위해)
+      if (snapshot.company_layout) layoutStateRef.current.company = snapshot.company_layout
+      if (snapshot.name_layout) layoutStateRef.current.name = snapshot.name_layout
+      if (snapshot.title_layout) layoutStateRef.current.title = snapshot.title_layout
+      
+      // 🔹 회사명 복원 (텍스트 + 레이아웃 모두 복원)
+      if (companyObj) {
+        // 텍스트 복원
+        if (snapshot.company_text) {
+          companyObj.set('text', snapshot.company_text)
+          currentTextRef.current.company = snapshot.company_text
+          console.log('📸 회사명 텍스트 복원:', snapshot.company_text)
+        }
+        // 레이아웃 복원
+        if (snapshot.company_layout) {
+          applyLayout(companyObj, snapshot.company_layout)
+          companyObj.setCoords()
+          layoutStateRef.current.company = pickLayout(companyObj)
+          console.log('🔹 스냅샷 복원 후 layoutStateRef.company 동기화:', layoutStateRef.current.company)
+        }
+      }
+      
+      // 🔹 이름 복원 (텍스트 + 레이아웃 모두 복원)
+      if (nameObj) {
+        // 텍스트 복원
+        if (snapshot.name_text) {
+          nameObj.set('text', snapshot.name_text)
+          currentTextRef.current.name = snapshot.name_text
+          console.log('📸 이름 텍스트 복원:', snapshot.name_text)
+        }
+        // 레이아웃 복원
+        if (snapshot.name_layout) {
+          applyLayout(nameObj, snapshot.name_layout)
+          nameObj.setCoords()
+          layoutStateRef.current.name = pickLayout(nameObj)
+          console.log('🔹 스냅샷 복원 후 layoutStateRef.name 동기화:', layoutStateRef.current.name)
+        }
+      }
+      
+      // 🔹 직급 복원 (텍스트 + 레이아웃 모두 복원)
+      if (titleObj) {
+        // 텍스트 복원
+        if (snapshot.title_text) {
+          titleObj.set('text', snapshot.title_text)
+          currentTextRef.current.title = snapshot.title_text
+          console.log('📸 직급 텍스트 복원:', snapshot.title_text)
+        }
+        // 레이아웃 복원
+        if (snapshot.title_layout) {
+          applyLayout(titleObj, snapshot.title_layout)
+          titleObj.setCoords()
+          layoutStateRef.current.title = pickLayout(titleObj)
+          console.log('🔹 스냅샷 복원 후 layoutStateRef.title 동기화:', layoutStateRef.current.title)
+        }
+      }
+      
+      // 🔹 단일 동기화 지점: 캔버스 객체에서 읽어와서 currentTextRef 업데이트
+      // 스냅샷에 텍스트가 없으면 현재 캔버스 텍스트 유지
+      // 플레이스홀더(non-breaking space)는 실제 텍스트로 간주하지 않음
+      currentTextRef.current = {
+        company: companyObj ? (companyObj.text === '\u00A0' ? '' : companyObj.text || '') : '',
+        name: nameObj ? (nameObj.text === '\u00A0' ? '' : nameObj.text || '') : '',
+        title: titleObj ? (titleObj.text === '\u00A0' ? '' : titleObj.text || '') : ''
+      }
+      
+      console.log('📸 스냅샷 복원 후 currentTextRef (캔버스 객체에서 읽어옴):', currentTextRef.current)
+      console.log('📸 스냅샷 복원 후 layoutStateRef:', layoutStateRef.current)
+
+      // 🔹 스냅샷 복원 직후 플래그 설정 (updateCanvasWithProfile에서 텍스트 덮어쓰기 방지)
+      isSnapshotJustRestoredRef.current = true
+      
       canvas.renderAll()
-      console.log('Canvas force rendered after profile update (3rd)')
-    }, 500)
-  }, [fabricCanvasRef, safeRenderAll])
+      console.log('✅ 스냅샷 복원 완료:', snapshot.id)
+      return true
+    } catch (error) {
+      console.error('스냅샷 복원 오류:', error)
+      return false
+    }
+  }, [fabricCanvasRef])
+
+  // 이벤트별 최신 스냅샷 불러오기 (에디트창용)
+  const loadLatestSnapshot = useCallback(async (eventId) => {
+    if (!eventId) return null
+
+    try {
+      const result = await getLatestSnapshotByEvent(eventId)
+      if (result.success && result.data) {
+        console.log('📸 이벤트별 최신 스냅샷 발견:', result.data.id)
+        return result.data
+      }
+      return null
+    } catch (error) {
+      console.error('이벤트별 스냅샷 조회 오류:', error)
+      return null
+    }
+  }, [])
 
   // 기본 템플릿으로 캔버스 초기화 (프로필 없이)
   const initializeCanvasWithDefaultTemplate = useCallback(async () => {
@@ -721,7 +1159,12 @@ export default function CanvasEditor({
     
     safeRenderAll(canvas)
     
-    if (onCanvasUpdate) onCanvasUpdate()
+    if (onCanvasUpdate) {
+      onCanvasUpdate({
+        type: 'modification',
+        object: null
+      })
+    }
   }
 
   // JSON 보기 함수
@@ -739,24 +1182,25 @@ export default function CanvasEditor({
     setJsonData(null)
   }
 
-  // 캔버스 JSON 내보내기
+  // 캔버스 JSON 내보내기 (dataField 포함)
   const exportCanvas = () => {
     if (!fabricCanvasRef.current) return null
     
     const canvas = fabricCanvasRef.current
-    const data = canvas.toJSON()
+    // 커스텀 속성(dataField)을 JSON 저장에 포함
+    const data = canvas.toJSON(['dataField'])
     console.log('Canvas JSON:', data)
     return data
   }
 
-  // 현재 캔버스 JSON 가져오기 (최대 단순화)
+  // 현재 캔버스 JSON 가져오기 (dataField 포함)
   const getCurrentCanvasJson = useCallback(() => {
     if (!fabricCanvasRef.current) return null
     
     const canvas = fabricCanvasRef.current
     
-    // 캔버스 JSON을 그대로 반환 (모든 정보가 이미 포함되어 있음)
-    const canvasJson = canvas.toJSON()
+    // 커스텀 속성(dataField)을 JSON 저장에 포함
+    const canvasJson = canvas.toJSON(['dataField'])
     console.log('Canvas JSON:', canvasJson)
     
     return canvasJson
@@ -825,6 +1269,18 @@ export default function CanvasEditor({
       const canvas = fabricCanvasRef.current
       console.log('Clearing canvas...')
       
+      // 🔹 배경 이미지 보존: 기존 배경 이미지 저장
+      const existingBackgroundImage = canvas.getObjects().find(obj => obj.type === 'background')
+      const backgroundImageData = existingBackgroundImage ? {
+        src: existingBackgroundImage.src,
+        left: existingBackgroundImage.left,
+        top: existingBackgroundImage.top,
+        scaleX: existingBackgroundImage.scaleX,
+        scaleY: existingBackgroundImage.scaleY,
+        opacity: existingBackgroundImage.opacity,
+        angle: existingBackgroundImage.angle
+      } : null
+      
       // 기존 객체들 모두 제거
       canvas.clear()
       
@@ -859,6 +1315,40 @@ export default function CanvasEditor({
         await loadOptimizedTemplate(canvas, jsonData)
       }
       
+      // 🔹 배경 이미지 복원: 템플릿에 배경 이미지가 없으면 기존 배경 이미지 복원
+      const templateHasBackground = templateData.objects?.some(obj => obj.type === 'background')
+      if (backgroundImageData && !templateHasBackground) {
+        console.log('Restoring existing background image:', backgroundImageData.src)
+        fabric.Image.fromURL(backgroundImageData.src, (img) => {
+          if (!img) return
+          
+          img.set({
+            left: backgroundImageData.left || 0,
+            top: backgroundImageData.top || 0,
+            scaleX: backgroundImageData.scaleX || (canvas.getWidth() / img.width),
+            scaleY: backgroundImageData.scaleY || (canvas.getHeight() / img.height),
+            selectable: true,
+            evented: false,
+            opacity: backgroundImageData.opacity || backgroundOpacity,
+            type: 'background',
+            src: backgroundImageData.src,
+            angle: backgroundImageData.angle || 0,
+            zIndex: -1000
+          })
+          
+          canvas.add(img)
+          canvas.sendToBack(img)
+          safeRenderAll(canvas)
+          
+          // 배경 이미지 상태 업데이트
+          setBackgroundImage({
+            url: backgroundImageData.src,
+            fileName: 'background.png',
+            opacity: backgroundImageData.opacity || backgroundOpacity
+          })
+        }, { crossOrigin: 'anonymous' })
+      }
+      
     } catch (error) {
       console.error('Error loading template:', error)
       // createDefaultTemplate 호출 제거 - 에러를 명확히 표시
@@ -867,7 +1357,7 @@ export default function CanvasEditor({
       setIsLoading(false)
       console.log('=== TEMPLATE LOADING COMPLETED ===')
     }
-  }, [fabricCanvasRef, getErrorMessage])
+  }, [fabricCanvasRef, getErrorMessage, backgroundOpacity, setBackgroundImage])
 
   // 최적화된 템플릿 로드
   const loadOptimizedTemplate = async (canvas, templateData) => {
@@ -930,8 +1420,18 @@ export default function CanvasEditor({
       // 객체들 복원
       for (const objData of templateData.objects || []) {
         if (objData.type === 'i-text' || objData.type === 'text') {
+          // 🔹 템플릿 텍스트 로드 (빈 문자열이면 currentTextRef의 값 사용)
+          let textToLoad = objData.text || ''
+          
+          // 템플릿 텍스트가 비어있고 currentTextRef에 값이 있으면 사용
+          if (!textToLoad && objData.dataField && currentTextRef.current[objData.dataField]) {
+            textToLoad = currentTextRef.current[objData.dataField]
+            console.log(`⚠️ 템플릿 텍스트 비어있음, currentTextRef 사용: ${objData.dataField} = ${textToLoad}`)
+          }
+          
           // 텍스트 객체는 동기 처리
-          const textObj = new fabric.IText(objData.text || '', {
+          const textObj = new fabric.IText(textToLoad, {
+            dataField: objData.dataField, // 🔹 커스텀 속성 복원
             left: objData.left,
             top: objData.top,
             width: objData.width,
@@ -954,6 +1454,22 @@ export default function CanvasEditor({
           })
           textObj.setCoords()
           canvas.add(textObj)
+          
+          // 로드 시 레이아웃 스냅샷도 갱신
+          if (objData.dataField) {
+            layoutStateRef.current[objData.dataField] = pickLayout(textObj)
+            // 템플릿에서 로드한 텍스트가 초기값이 아니면 업데이트, 초기값이면 현재 값 유지
+            const loadedText = textObj.text
+            const isLoadedInitial = (objData.dataField === 'company' && loadedText === '회사명') ||
+                                    (objData.dataField === 'name' && loadedText === '이름') ||
+                                    (objData.dataField === 'title' && loadedText === '직급')
+            
+            if (!isLoadedInitial && loadedText) {
+              currentTextRef.current[objData.dataField] = loadedText
+            }
+            // 초기값이면 currentTextRef는 유지 (덮어쓰지 않음)
+            console.log(`Layout snapshot restored for ${objData.dataField}, text: ${loadedText}, isInitial: ${isLoadedInitial}`)
+          }
           
         } else if (objData.type === 'image') {
           // 이미지 객체는 비동기 처리
@@ -1098,6 +1614,12 @@ export default function CanvasEditor({
       if (asyncTasks.length > 0) {
         await Promise.all(asyncTasks)
       }
+      
+      // 🔹 배경 이미지 복원: 템플릿에 배경 이미지가 없으면 기존 배경 이미지 복원
+      // (loadTemplate에서 저장한 backgroundImageData 사용)
+      // 주의: 이 함수는 loadTemplate 내부에서 호출되므로 backgroundImageData를 파라미터로 받아야 함
+      // 하지만 현재 구조상 backgroundImageData는 loadTemplate의 지역 변수이므로
+      // 대신 loadTemplate에서 직접 처리하도록 변경
       
       // 최종 렌더링
       safeRenderAll(canvas)
@@ -1335,7 +1857,10 @@ export default function CanvasEditor({
       fabricCanvasRef.current.renderAll()
       
       if (onCanvasUpdate) {
-        onCanvasUpdate()
+        onCanvasUpdate({
+          type: 'modification',
+          object: img
+        })
       }
     })
   }
@@ -1378,11 +1903,15 @@ export default function CanvasEditor({
     closeContextMenu()
     
     if (onCanvasUpdate) {
-      onCanvasUpdate()
+      onCanvasUpdate({
+        type: 'modification',
+        object: canvas.getActiveObject()
+      })
     }
   }
 
-  // selectedProfile 변경 시 캔버스 업데이트
+  // selectedProfile 변경 시: 프로필 데이터로 텍스트 업데이트
+  // 🔹 스냅샷 복원 직후에는 텍스트 업데이트 건너뛰기 (스냅샷 텍스트 보존)
   useEffect(() => {
     if (!fabricCanvasRef.current || !isCanvasReady) return
 
@@ -1392,15 +1921,94 @@ export default function CanvasEditor({
       return
     }
 
-    if (selectedProfile) {
-      // 프로필이 선택된 경우 해당 프로필로 업데이트
+    // 🔹 스냅샷 복원 직후에는 텍스트 업데이트를 건너뛰지 않음
+    // 대신 updateCanvasWithProfile에서 스냅샷 텍스트를 보존하도록 처리
+    // (스냅샷 복원 직후에도 프로필 클릭 시 편집창에 반영되어야 함)
+
+    let timeoutId = null
+
+    // 사용자 상호작용 중이면 바인딩 지연 (약간의 지연 후 재시도)
+    if (isUserInteractingRef.current) {
+      console.log('CanvasEditor: User interacting; defer binding')
+      // 200ms 후 재시도
+      timeoutId = setTimeout(() => {
+        if (!isUserInteractingRef.current && selectedProfile) {
+          console.log('CanvasEditor: Retrying profile update after interaction')
+          updateCanvasWithProfile(selectedProfile)
+          // 프로필 시그니처 업데이트
+          const sig = [
+            selectedProfile?.id ?? '',
+            selectedProfile?.name ?? '',
+            selectedProfile?.company ?? '',
+            selectedProfile?.title ?? ''
+          ].join('|')
+          currentProfileSigRef.current = sig
+        }
+      }, 200)
+    } else {
+      if (!selectedProfile) {
+        console.log('CanvasEditor: No profile selected, keeping current canvas content')
+        currentProfileSigRef.current = ''
+        return
+      }
+      // 동일 프로필이면 스킵
+      const sig = [
+        selectedProfile?.id ?? '',
+        selectedProfile?.name ?? '',
+        selectedProfile?.company ?? '',
+        selectedProfile?.title ?? ''
+      ].join('|')
+      if (currentProfileSigRef.current === sig) {
+        console.log('CanvasEditor: Profile unchanged, skip')
+        return
+      }
       console.log('CanvasEditor: Updating canvas with profile:', selectedProfile.name)
       updateCanvasWithProfile(selectedProfile)
-    } else {
-      // 프로필이 선택되지 않은 경우 기본 템플릿으로 초기화하지 않음 (로드된 템플릿 유지)
-      console.log('CanvasEditor: No profile selected, but keeping current canvas content')
+      currentProfileSigRef.current = sig
     }
-  }, [selectedProfile, isCanvasReady, updateCanvasWithProfile, initializeCanvasWithDefaultTemplate, isLoading])
+
+    // cleanup 함수
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }, [selectedProfile?.id, isCanvasReady, updateCanvasWithProfile, isLoading])
+
+  // ✅ 이벤트(페이지) 진입 시 1회만 스냅샷 복원
+  useEffect(() => {
+    if (!fabricCanvasRef.current || !isCanvasReady || !eventId) return
+    if (hasRestoredSnapshotForEventRef.current) return
+    
+    ;(async () => {
+      try {
+        const latest = await loadLatestSnapshot(eventId)
+        if (latest) {
+          console.log('📸 최초 1회 스냅샷 복원:', latest.id)
+          await restoreSnapshot(latest)
+          hasRestoredSnapshotForEventRef.current = true
+          isLayoutDirtyRef.current = false
+        }
+      } catch (e) {
+        console.warn('스냅샷 1회 복원 실패:', e)
+      }
+    })()
+  }, [isCanvasReady, eventId, loadLatestSnapshot, restoreSnapshot])
+
+  // eventId 변경 시 플래그 리셋
+  useEffect(() => {
+    hasRestoredSnapshotForEventRef.current = false
+    isLayoutDirtyRef.current = false
+  }, [eventId])
+
+  // 컴포넌트 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+      }
+    }
+  }, [])
 
   // 외부에서 템플릿 로드 호출 가능하도록 노출 (캔버스 준비 후)
   useEffect(() => {
